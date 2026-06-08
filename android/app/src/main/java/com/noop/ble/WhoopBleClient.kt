@@ -346,6 +346,8 @@ class WhoopBleClient(
     /** Descriptor-write queue: enabling notifications is also a one-at-a-time GATT operation. */
     private val cccdQueue = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
     private var cccdInFlight = false
+    /** Set once startSession() has fired the first command, so it runs exactly once per connection. */
+    private var sessionStarted = false
 
     // ====================================================================================
     // MARK: Public API  (port of BLEManager.connect / disconnect / send + buzz helper)
@@ -559,22 +561,22 @@ class WhoopBleClient(
             val whoop4 = g.getService(WHOOP4_SERVICE)
             val whoop5 = g.getService(WHOOP5_SERVICE)
             if (whoop4 != null) {
-                // Verified WHOOP 4.0 path (unchanged): capture the cmd-write char, FIRE THE BOND
-                // (one CONFIRMED GET_BATTERY_LEVEL write triggers just-works bonding), queue notify subs.
+                // Verified WHOOP 4.0 path: capture the cmd-write char + queue the notify subscriptions.
+                // We do NOT fire the bond write here. Android allows only ONE outstanding GATT operation,
+                // so writing the bond frame now would race the CCCD descriptor writes below and the stack
+                // would reject every subscription — the strap bonds (the confirmed write succeeds) but no
+                // notifications ever enable, so HR/battery/events stay empty (issue #12). The bond write
+                // is deferred to startSession(), which runs once every notification is on.
                 connectedFamily = DeviceFamily.WHOOP4
                 cmdCharacteristic = whoop4.getCharacteristic(CMD_WRITE_CHAR)
-                cmdCharacteristic?.let { writeBondFrame(g, it) }
                 whoop4.getCharacteristic(CMD_NOTIFY_CHAR)?.let { cccdQueue.add(it) }
                 whoop4.getCharacteristic(EVENT_NOTIFY_CHAR)?.let { cccdQueue.add(it) }
                 whoop4.getCharacteristic(DATA_NOTIFY_CHAR)?.let { cccdQueue.add(it) }
             } else if (whoop5 != null) {
-                // EXPERIMENTAL WHOOP 5.0/MG: a 5/MG strap opens a session with the static CLIENT_HELLO
-                // frame written to fd4b0002, not the WHOOP4 confirmed-write bond. Live HR + battery come
-                // from the standard 0x2A37/0x2A19 profiles (subscribed below); this just unlocks the
-                // session. It is UNVERIFIED on real MG hardware — so onCharacteristicWrite skips the
-                // WHOOP4 bond/handshake for this family.
+                // EXPERIMENTAL WHOOP 5.0/MG: opens with CLIENT_HELLO (sent in startSession, after the
+                // standard HR/battery notifications are enabled), not the WHOOP4 confirmed-write bond.
                 connectedFamily = DeviceFamily.WHOOP5
-                log("WHOOP 5/MG detected — sending CLIENT_HELLO (experimental).")
+                log("WHOOP 5/MG detected — will send CLIENT_HELLO after subscribing (experimental).")
                 _state.value = _state.value.copy(
                     whoop5Detected = true,
                     statusNote = "WHOOP 5/MG connected — experimental. Trying to bring up live heart rate " +
@@ -582,7 +584,6 @@ class WhoopBleClient(
                         "battery may appear but deeper metrics won't. WHOOP 4.0 is fully supported today.",
                 )
                 cmdCharacteristic = whoop5.getCharacteristic(WHOOP5_CMD_WRITE_CHAR)
-                cmdCharacteristic?.let { writeClientHello(g, it) }
             } else {
                 log("Custom WHOOP service not found on this peripheral")
             }
@@ -593,7 +594,8 @@ class WhoopBleClient(
             // 3. Standard battery profile (plain %).
             g.getService(BATTERY_SERVICE)?.getCharacteristic(BATTERY_CHAR)?.let { cccdQueue.add(it) }
 
-            // Drain the descriptor queue (enables notifications one at a time).
+            // Enable notifications one at a time. When the queue is fully drained, startSession() fires
+            // the first command (bond / CLIENT_HELLO) — never racing the descriptor writes.
             drainCccdQueue(g)
         }
 
@@ -1010,10 +1012,39 @@ class WhoopBleClient(
         if (!ok) log("Puffin TOGGLE_REALTIME_HR probe rejected by stack")
     }
 
+    /**
+     * Open the session once every notification is subscribed. Android serializes GATT operations, so
+     * issuing the first command earlier raced the CCCD descriptor writes and dropped the subscriptions
+     * (issue #12). WHOOP 4.0 fires the just-works bond write (its ACK triggers the connect handshake in
+     * onCharacteristicWrite); WHOOP 5/MG sends CLIENT_HELLO (which itself fires the puffin probe when
+     * the experiment is enabled). Guarded so it runs exactly once per connection.
+     */
+    @SuppressLint("MissingPermission")
+    private fun startSession(g: BluetoothGatt) {
+        if (sessionStarted) return
+        sessionStarted = true
+        val cmd = cmdCharacteristic
+        if (cmd == null) {
+            log("Subscribed, but no command characteristic — cannot open a session")
+            return
+        }
+        when (connectedFamily) {
+            DeviceFamily.WHOOP4 -> writeBondFrame(g, cmd)
+            DeviceFamily.WHOOP5 -> writeClientHello(g, cmd)
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun drainCccdQueue(g: BluetoothGatt) {
         if (cccdInFlight) return
-        val ch = cccdQueue.poll() ?: return
+        val ch = cccdQueue.poll()
+        if (ch == null) {
+            // Every notification is enabled — now it's safe to write the first command, one GATT
+            // operation at a time. This is the fix for issue #12: the bond/hello no longer races the
+            // CCCD descriptor writes (which had silently dropped every subscription).
+            startSession(g)
+            return
+        }
         cccdInFlight = true
 
         // Tell the local stack to surface notifications, then write the CCCD so the remote starts
@@ -1271,6 +1302,7 @@ class WhoopBleClient(
         cccdQueue.clear()
         writeInFlight = false
         cccdInFlight = false
+        sessionStarted = false
 
         // Reset offload state so the next connect starts a fresh session (port of the backfill
         // flag resets in didDisconnectPeripheral). Timers are handler-posted, so cancel them here.
