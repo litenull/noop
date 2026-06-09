@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.42"
+    static let currentVersion = "1.43"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,13 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.43",
+            title: "Your whole day's heart rate, on the dashboard",
+            date: "June 2026",
+            items: [
+                "New: Control Center now shows a 24-hour heart-rate trend — your continuous heart rate across today, read straight from the strap's own history (so it's there even for the hours the app was closed, not just while it's open). It plots 5-minute averages with the day's low, average and high underneath. Mac and Android. Thanks to the requests on Reddit.",
+            ]),
         Release(
             version: "1.42",
             title: "Reconnects automatically after an update (Android)",

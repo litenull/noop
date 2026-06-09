@@ -17,6 +17,17 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.43 — 24-hour heart-rate trend on the dashboard
+
+- **See your whole day's heart rate on Control Center** (Mac + Android). A new full-width trend plots
+  your continuous heart rate across today, read straight from the strap's own ~1 Hz history — so it
+  fills in even for the hours the app was closed, not just while it's open.
+  - **Downsampled in SQL**: a fully-worn day is ~86k samples at 1 Hz, so the chart reads 5-minute
+    bucket means (`GROUP BY ts/300`) rather than loading every row — a new `hrBuckets()` on both the
+    GRDB store and the Room DAO. The day's low / average / high sit under the chart.
+  - Hidden until there's wear today, so a strap with no readings yet shows nothing rather than an
+    empty axis. Works on WHOOP 4.0, and on 5.0/MG (its live HR feeds the trend too).
+
 ## 1.42 — Auto-reconnect to your strap on launch (Android, #67)
 
 - **NOOP reconnects to your strap automatically when the app starts** (issue #67 — jamartif: after an
