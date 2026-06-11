@@ -512,6 +512,9 @@ class WhoopBleClient(
                 }.onSuccess {
                     log("Backfill: post-sync scoring pass done")
                 }.onFailure {
+                    // The scoring pass now hops to Dispatchers.Default; shutdown() cancels it, which is
+                    // not a scoring failure — rethrow so the cancellation isn't swallowed/mis-logged. (#125)
+                    if (it is kotlin.coroutines.cancellation.CancellationException) throw it
                     log("Backfill: post-sync scoring failed: ${it.message}")
                 }
                 // Keep the opt-in Health Connect writeback fresh in background-only operation too.

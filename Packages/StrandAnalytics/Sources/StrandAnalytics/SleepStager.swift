@@ -184,13 +184,19 @@ public enum SleepStager {
         let n = grav.count
         if n < 2 { return [Bool](repeating: false, count: n) }
         let half = windowSize(grav.map { $0.ts }) / 2
+        // stillPrefix[i] = # still samples among deltas[0..<i]: O(1) window counts → an O(n) scan, not
+        // O(n×window). The old nested loop burned minutes of CPU per analysis tick (and on Android, on
+        // the main thread, froze the app into ANRs after a few nights of 1 Hz history). Identical output.
+        var stillPrefix = [Int](repeating: 0, count: n + 1)
+        for i in 0..<n {
+            stillPrefix[i + 1] = stillPrefix[i] + (deltas[i] < gravityStillThresholdG ? 1 : 0)
+        }
         var flags: [Bool] = []
         flags.reserveCapacity(n)
         for i in 0..<n {
             let lo = max(0, i - half)
             let hi = min(n, i + half + 1)
-            var stillCount = 0
-            for j in lo..<hi where deltas[j] < gravityStillThresholdG { stillCount += 1 }
+            let stillCount = stillPrefix[hi] - stillPrefix[lo]
             flags.append(Double(stillCount) / Double(hi - lo) >= stillFraction)
         }
         return flags

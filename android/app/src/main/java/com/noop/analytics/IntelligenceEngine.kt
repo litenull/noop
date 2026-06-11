@@ -4,6 +4,8 @@ import com.noop.data.DailyMetric
 import com.noop.data.SleepSession
 import com.noop.data.WhoopRepository
 import com.noop.data.WorkoutRow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /*
  * IntelligenceEngine.kt — on-device "intelligence": computes recovery / day-strain /
@@ -67,7 +69,25 @@ object IntelligenceEngine {
      * @param nowSeconds wall-clock now (unix seconds); injectable for tests/determinism.
      * @return the per-day [Computed] summaries (newest first), mirroring the Swift `out`.
      */
+    /**
+     * Public entry: hop OFF the caller's thread before the CPU-heavy scoring. The AppViewModel 15-min
+     * loop launches from viewModelScope (Dispatchers.Main), so without this hop the whole pass —
+     * SleepStager / StrainScorer over up to 21 nights of 1 Hz data — ran on the MAIN THREAD and
+     * ANR-killed the app once a few nights had accumulated. Dispatchers.Default is the CPU pool; Room's
+     * suspend DAO calls are main-safe under any dispatcher. (#125)
+     */
     suspend fun analyzeRecent(
+        repo: WhoopRepository,
+        profile: UserProfile = UserProfile(),
+        maxDays: Int = 21,
+        importedDeviceId: String = "my-whoop",
+        maxHROverride: Double? = null,
+        nowSeconds: Long = System.currentTimeMillis() / 1000L,
+    ): List<Computed> = withContext(Dispatchers.Default) {
+        analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride, nowSeconds)
+    }
+
+    private suspend fun analyzeRecentOnCpu(
         repo: WhoopRepository,
         profile: UserProfile = UserProfile(),
         maxDays: Int = 21,

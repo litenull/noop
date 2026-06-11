@@ -17,6 +17,19 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.84 — Fix the Android freeze after a few nights of data
+
+- **Fixed (Android):** the app could freeze and get ANR-killed ("app isn't responding") once a strap
+  had banked a few nights of history. The nightly sleep analysis ran a slow scan **on the main
+  thread**; it now runs off the main thread, and the scan itself went from **O(n²) to O(n)** — so the
+  app stays responsive regardless of how much history accumulates. (Mac was never affected — it
+  already ran this off-screen.) (#125, thanks to a detailed field report)
+- **Improved (Mac and Android):** the strap log no longer reads a history chunk that's only the
+  strap's own diagnostic chatter as "dropped" data, and it now logs undecodable records on
+  partially-decoded chunks too. (#120, #123)
+
+---
+
 ## 1.83 — Workout calories (manual sessions + Health Connect imports)
 
 - **Fixed (Mac and Android):** a workout you **start yourself** now estimates its calories from your

@@ -7,7 +7,7 @@ enum AppChangelog {
 
     /// Bump this when you add a release below. The "What's New" sheet shows automatically when the
     /// stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
-    static let currentVersion = "1.83"
+    static let currentVersion = "1.84"
 
     struct Release: Identifiable {
         let version: String
@@ -19,6 +19,14 @@ enum AppChangelog {
 
     /// Newest first.
     static let releases: [Release] = [
+        Release(
+            version: "1.84",
+            title: "Fix the Android freeze after a few nights of data",
+            date: "June 2026",
+            items: [
+                "Fixed (Android): the app could freeze and get killed (\"app isn't responding\") after a strap had banked a few nights of history. The nightly sleep analysis ran a slow scan ON the main thread; it's now off the main thread and the scan itself went from O(n²) to O(n) — so the app stays responsive no matter how much history accumulates. (Mac was never affected — it already ran this off-screen.) (#125, thanks to a detailed field report)",
+                "Improved (Mac and Android): the strap log no longer reads a history chunk that's only the strap's own diagnostic chatter as \"dropped\" data, and it now logs undecodable records on partially-decoded chunks too — clearer when something genuinely needs attention. (#120, #123)",
+            ]),
         Release(
             version: "1.83",
             title: "Workout calories — for manual sessions and Health Connect imports",

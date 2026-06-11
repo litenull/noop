@@ -205,7 +205,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         maxHROverride = profileStore.hrMaxOverride
                             .takeIf { it > 0 }?.toDouble(),
                     )
-                }
+                    // analyzeRecent now hops to Dispatchers.Default; a scope cancellation surfaces as a
+                    // CancellationException that runCatching would otherwise swallow, breaking the loop's
+                    // own cancellation — rethrow it so onCleared() actually stops the loop. (#125)
+                }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
                 // Opt-in writeback: push the freshly computed nights into Health Connect so other
                 // apps see them. Idempotent (clientRecordId per metric+day), so re-running every
                 // cycle just upserts. Never let an HC hiccup (perm revoked mid-flight, provider
