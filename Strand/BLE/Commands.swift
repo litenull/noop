@@ -28,6 +28,14 @@ public enum WhoopCommand: UInt8, CaseIterable {
     case getExtendedBatteryInfo = 98
     case toggleIMUMode         = 106
     case enableOpticalData     = 107
+    /// SET_CONFIG / SET_FF_VALUE (0x78) — write one persistent device feature-flag. Used by the
+    /// WHOOP 5.0/MG "enable R22 packets" sequence that switches on the deep biometric streams the
+    /// strap otherwise withholds from third-party apps (documented independently by judes.club and
+    /// Asherlc/dofek; see Whoop5Config). Payload = `[0x01] + Whoop5Config.payload(name:value:)`
+    /// (a 40-byte NUL-padded ASCII flag name + an ASCII '1'/'2' value byte). Reversible — it only
+    /// toggles which data the strap emits, and is gated behind an opt-in. iOS/Android only on real
+    /// hardware (macOS cannot complete the authenticated bond required to write commands).
+    case setConfig             = 120
     /// Fire a preset haptic pattern. Payload = `[patternId, numLoops, 0, 0, 0]` (5 bytes, from
     /// the device's preset table). patternId indexes the device's preset patterns (GET_ALL_HAPTICS_PATTERN
     /// reports 7 on harvard); the official app fires id=2. Safe/reversible — just buzzes the motor.
@@ -77,6 +85,7 @@ public enum WhoopCommand: UInt8, CaseIterable {
         case .getExtendedBatteryInfo:return "Get Extended Battery Info"
         case .toggleIMUMode:         return "Toggle IMU Mode"
         case .enableOpticalData:     return "Enable Optical Data"
+        case .setConfig:             return "Set Config (R22 feature flag)"
         case .runHapticsPattern:     return "Run Haptics Pattern"
         case .stopHaptics:           return "Stop Haptics"
         case .sendR10R11Realtime:    return "R10/R11 Realtime (raw stream)"

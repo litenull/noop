@@ -25,6 +25,10 @@ struct SettingsView: View {
     /// Opt-in WHOOP 5/MG raw-frame capture to a file (off by default). See [PuffinFrameRecorder].
     @AppStorage(PuffinFrameRecorder.enabledKey) private var puffinCapture = false
 
+    /// Opt-in WHOOP 5/MG "R22" deep-data unlock (off by default) — the one probe that writes a
+    /// persistent feature flag to the strap. See [PuffinExperiment.deepDataKey]. (#174)
+    @AppStorage(PuffinExperiment.deepDataKey) private var deepDataEnabled = false
+
     // Imperial/Metric display preference (D#103). Stored data is always SI; this only changes how
     // distances/weights/heights/temperatures are SHOWN — and lets the profile fields below take
     // imperial entry. Temperature has a separate override so °C/°F can be picked independently.
@@ -371,6 +375,36 @@ struct SettingsView: View {
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Divider().overlay(StrandPalette.hairline)
+
+                // MARK: R22 deep-data unlock — the one probe that writes to the strap.
+                Toggle(isOn: $deepDataEnabled) {
+                    Text("Unlock WHOOP 5/MG deep data (R22)")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(StrandPalette.accent)
+                Text("WHOOP 5/MG straps hand a fresh app only live heart rate. The official app switches on the deeper streams (high-rate HR + motion + history) by writing a set of feature flags — a sequence two independent projects have documented. With this on, the button below sends that exact sequence to your strap. Unlike everything else here it does write to the strap, but it's reversible (it only changes which data the strap chooses to emit) and is the same thing the official app does. Experimental: it may do nothing on your firmware. iPhone/Android only — a Mac can't write to a 5/MG.")
+                    .font(StrandFont.caption)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if deepDataEnabled {
+                    Button {
+                        model.ble.enableWhoop5DeepData()
+                    } label: {
+                        Label("Send enable sequence to strap", systemImage: "bolt.badge.automatic")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(StrandPalette.accent)
+                    .disabled(!live.bonded || !live.worn)
+                    Text(live.bonded ? (live.worn ? "Wear the strap, tap once, then let it sync and share your strap log." : "Put the strap on first — the deep stream is on-wrist only.") : "Connect and bond a 5/MG strap first.")
+                        .font(StrandFont.caption)
+                        .foregroundStyle(StrandPalette.textTertiary)
+                }
 
                 Divider().overlay(StrandPalette.hairline)
 

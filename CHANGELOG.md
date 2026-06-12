@@ -17,6 +17,21 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 2.5.0 — Experimental: unlocking WHOOP 5.0/MG deep data
+
+- **New (Mac, iOS and Android — experimental, opt-in):** a **WHOOP 5.0/MG "deep data" unlock** under
+  **Settings → Experimental**. 5/MG straps give a fresh third-party app only live heart rate; the official
+  app switches on the deeper streams (high-rate HR + motion + history) by writing a set of **feature
+  flags**. NOOP can now send that exact, [documented](docs/WHOOP5_DEEP_DATA.md) sequence to your strap —
+  one button, only when the strap is **worn and bonded**. It does write to the strap, but it's
+  **reversible** (it only changes which data the strap emits) and is the same thing the official app does.
+  Experimental: it may do nothing on your firmware yet. If you own a 5/MG, turning it on and sharing your
+  strap log on [#174](https://github.com/NoopApp/noop/issues/174) is exactly what we need to finish 5.0/MG
+  support. **iPhone/Android only** — a Mac can't write to a 5/MG. Built on the public protocol work of
+  **judes.club**, **Asherlc/dofek** and **b-nnett/goose**.
+
+---
+
 ## 2.4.0 — A small, honest ask
 
 - **New (Mac, iOS and Android):** a small card on the Today screen — at most **once every 12 hours** —

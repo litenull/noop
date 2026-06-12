@@ -485,7 +485,13 @@ public final class BLEManager: NSObject, ObservableObject {
                 || command == .setAlarmTime || command == .getAlarmTime
                 || command == .runAlarm || command == .disableAlarm
                 || command == .sendHistoricalData || command == .historicalDataResult
-                || command == .setClock || command == .getClock else {
+                || command == .setClock || command == .getClock
+                // SET_CONFIG (the R22 deep-stream unlock) is allowed ONLY while the deep-data
+                // experiment is opted in — it writes a persistent feature flag to the strap, so it
+                // must never fire on a default install. It's still reversible (just changes which
+                // data the strap emits) and is what the official app sends. Driven only by
+                // enableWhoop5DeepData(). (#174)
+                || (command == .setConfig && PuffinExperiment.deepDataEnabled) else {
                 log("send(\(command.label)) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -837,6 +843,44 @@ public final class BLEManager: NSObject, ObservableObject {
         wantsRealtime = false
         send(.toggleRealtimeHR, payload: [0x00])
         send(.sendR10R11Realtime, payload: [0x00])
+    }
+
+    /// EXPERIMENTAL (#174): write the official app's `enable_r22_*` SET_CONFIG sequence to a bonded
+    /// WHOOP 5/MG, to switch on the deep biometric (type-0x2F "R22") streams the strap withholds from a
+    /// fresh third-party connection. The exact 15-flag sequence + values are documented by judes.club
+    /// and Asherlc/dofek and built byte-for-byte by `Whoop5Config` (golden-frame unit-tested).
+    ///
+    /// Safety: only ever runs when the deep-data experiment is explicitly opted in AND the strap is a
+    /// bonded, worn 5/MG. The R22 stream is on-wrist gated, so an off-wrist strap is refused with a hint.
+    /// Each flag is one `.setConfig` write WITH RESPONSE, spaced ~80 ms (the official app pauses between
+    /// writes). Reversible — it only changes which data the strap emits. After it runs, the user should
+    /// wear + sync and share their strap log so we can confirm the deeper records start flowing.
+    public func enableWhoop5DeepData() {
+        guard selectedModel.deviceFamily == .whoop5 else {
+            log("Deep-data: needs a WHOOP 5.0/MG strap selected — ignored."); return
+        }
+        guard PuffinExperiment.deepDataEnabled else {
+            log("Deep-data: the deep-data experiment is off — enable it in Settings → Experimental first."); return
+        }
+        guard state.connected, state.bonded else {
+            log("Deep-data: connect and bond a 5/MG strap first — ignored."); return
+        }
+        guard state.worn else {
+            log("Deep-data: the R22 stream is on-wrist only — put the strap ON, then try again."); return
+        }
+        let frames = Whoop5Config.enableR22Sequence
+        log("Deep-data: sending the \(frames.count)-flag enable_r22 sequence (experimental, reversible)…")
+        for (i, flag) in frames.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80 * i)) { [weak self] in
+                guard let self else { return }
+                self.send(.setConfig,
+                          payload: [0x01] + Whoop5Config.payloadBody(name: flag.name, value: flag.value),
+                          writeType: .withResponse)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(80 * frames.count + 200)) { [weak self] in
+            self?.log("Deep-data: sequence sent. Keep the strap on, let it sync, then share your strap log — we're looking for new deep records (type-0x2F) to start arriving. (#174)")
+        }
     }
 
     private func startKeepAlive() {

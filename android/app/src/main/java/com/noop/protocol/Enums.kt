@@ -92,6 +92,10 @@ enum class CommandNumber(val rawValue: Int) {
     DISABLE_ALARM(69),
     RUN_HAPTICS_PATTERN(79),
     GET_ALL_HAPTICS_PATTERN(80),
+    // SET_CONFIG / SET_FF_VALUE (0x78) — write one persistent feature flag. The 5/MG "enable R22
+    // packets" sequence (Whoop5Config) sends 15 of these to switch on the deep biometric streams.
+    // Reversible; gated behind the deep-data opt-in; iOS/Android only. (#174)
+    SET_CONFIG(120),
     START_RAW_DATA(81),
     STOP_RAW_DATA(82),
     STOP_HAPTICS(122),

@@ -198,6 +198,7 @@ fun SettingsScreen(vm: AppViewModel) {
     val puffinExperiment = remember { PuffinExperiment.from(context) }
     var puffinExperiments by remember { mutableStateOf(puffinExperiment.isEnabled) }
     var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
+    var deepData by remember { mutableStateOf(puffinExperiment.isDeepDataEnabled) }
 
     // "Keep connected in the background" — drives WhoopConnectionService (foreground service). Default
     // on. SharedPreferences isn't reactive, so the Switch mirrors into a local state.
@@ -627,6 +628,58 @@ fun SettingsScreen(vm: AppViewModel) {
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
+
+                // --- R22 deep-data unlock — the one probe that writes to the strap. (#174) ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Unlock WHOOP 5/MG deep data (R22)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = deepData,
+                        onCheckedChange = {
+                            deepData = it
+                            puffinExperiment.isDeepDataEnabled = it
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Unlock WHOOP 5/MG deep data"
+                        },
+                    )
+                }
+                Text(
+                    "WHOOP 5/MG straps hand a fresh app only live heart rate. The official app switches on the deeper streams (high-rate HR + motion + history) by writing a set of feature flags — a sequence two independent projects have documented. With this on, the button below sends that exact sequence to your strap. Unlike everything else here it does write to the strap, but it's reversible (it only changes which data the strap emits) and is the same thing the official app does. Experimental — it may do nothing on your firmware.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+                if (deepData) {
+                    Button(
+                        onClick = { vm.ble.enableWhoop5DeepData() },
+                        enabled = live.bonded && live.worn,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Palette.accent, contentColor = Palette.surfaceBase,
+                        ),
+                    ) { Text("Send enable sequence to strap") }
+                    Text(
+                        if (!live.bonded) "Connect and bond a 5/MG strap first."
+                        else if (!live.worn) "Put the strap on first — the deep stream is on-wrist only."
+                        else "Wear the strap, tap once, then let it sync and share your strap log.",
+                        style = NoopType.caption,
+                        color = Palette.textTertiary,
+                    )
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

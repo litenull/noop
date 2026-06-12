@@ -37,6 +37,7 @@ import com.noop.protocol.DeviceFamily
 import com.noop.protocol.Framing
 import com.noop.protocol.Reassembler
 import com.noop.protocol.Streams
+import com.noop.protocol.Whoop5Config
 import com.noop.protocol.extractStreams
 import com.noop.analytics.IntelligenceEngine
 import com.noop.analytics.UserProfile
@@ -812,7 +813,11 @@ class WhoopBleClient(
                 cmd != CommandNumber.SEND_HISTORICAL_DATA && cmd != CommandNumber.HISTORICAL_DATA_RESULT &&
                 cmd != CommandNumber.SET_CLOCK && cmd != CommandNumber.GET_CLOCK &&
                 cmd != CommandNumber.GET_DATA_RANGE &&
-                cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM) {
+                cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM &&
+                // SET_CONFIG (the R22 deep-stream unlock) is allowed ONLY while the deep-data experiment
+                // is opted in — it writes a persistent feature flag to the strap, so it must never fire
+                // on a default install. Reversible; driven only by enableWhoop5DeepData(). (#174)
+                !(cmd == CommandNumber.SET_CONFIG && puffinExperiment.isDeepDataEnabled)) {
                 log("send(${cmd.name}) skipped — no WHOOP 5/MG framing for this command yet")
                 return
             }
@@ -1634,6 +1639,47 @@ class WhoopBleClient(
         if (connectedFamily == DeviceFamily.WHOOP4 || _state.value.bonded) {
             send(CommandNumber.TOGGLE_REALTIME_HR, byteArrayOf(0))
         }
+    }
+
+    /**
+     * EXPERIMENTAL (#174): write the official app's `enable_r22_*` SET_CONFIG sequence to a bonded
+     * WHOOP 5/MG to switch on the deep biometric (type-0x2F "R22") streams the strap withholds from a
+     * fresh third-party connection. Exact 15-flag sequence + values built byte-for-byte by
+     * [Whoop5Config] (documented by judes.club + Asherlc/dofek). Port of `BLEManager.enableWhoop5DeepData`.
+     *
+     * Safety: only runs when the deep-data experiment is opted in AND the strap is a bonded, worn 5/MG.
+     * The R22 stream is on-wrist gated. Each flag is one SET_CONFIG write WITH RESPONSE, spaced ~80 ms.
+     * Reversible — it only changes which data the strap emits. After it runs, wear + sync and share the
+     * strap log so we can confirm the deeper records start flowing.
+     */
+    fun enableWhoop5DeepData() {
+        if (connectedFamily != DeviceFamily.WHOOP5) {
+            log("Deep-data: needs a WHOOP 5.0/MG strap — ignored."); return
+        }
+        if (!puffinExperiment.isDeepDataEnabled) {
+            log("Deep-data: the deep-data experiment is off — enable it in Settings first."); return
+        }
+        val s = _state.value
+        if (!s.connected || !s.bonded) {
+            log("Deep-data: connect and bond a 5/MG strap first — ignored."); return
+        }
+        if (!s.worn) {
+            log("Deep-data: the R22 stream is on-wrist only — put the strap ON, then try again."); return
+        }
+        val flags = Whoop5Config.enableR22Sequence
+        log("Deep-data: sending the ${flags.size}-flag enable_r22 sequence (experimental, reversible)…")
+        flags.forEachIndexed { i, flag ->
+            handler.postDelayed({
+                send(
+                    CommandNumber.SET_CONFIG,
+                    byteArrayOf(0x01) + Whoop5Config.payloadBody(flag.name, flag.value),
+                    withResponse = true,
+                )
+            }, 80L * i)
+        }
+        handler.postDelayed({
+            log("Deep-data: sequence sent. Keep the strap on, let it sync, then share your strap log — we're looking for new deep records (type-0x2F) to start arriving. (#174)")
+        }, 80L * flags.size + 200L)
     }
 
     /**
