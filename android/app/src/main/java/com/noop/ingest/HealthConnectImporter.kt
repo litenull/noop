@@ -133,8 +133,16 @@ object HealthConnectImporter {
         } catch (e: Exception) {
             return ImportSummary.failure(SOURCE, "Could not read Health Connect permissions: ${e.message}")
         }
-        if (!granted.containsAll(PERMISSIONS)) {
-            return ImportSummary.failure(SOURCE, "Health Connect permissions have not been granted.")
+        // Partial permissions are fine (#150): import the record types the user DID grant and skip the
+        // rest, instead of refusing the whole import when any single type is missing. Each per-type read
+        // below is already independently fault-tolerant — a type whose read permission was revoked throws
+        // and is caught/skipped in [readAll] (same path as #34) — so we only need to bail when NOTHING is
+        // granted. The user choosing exactly what NOOP can see is the intended behaviour.
+        if (granted.none { it in PERMISSIONS }) {
+            return ImportSummary.failure(
+                SOURCE,
+                "No Health Connect data types are granted. Allow at least one type for NOOP in Health Connect, then import.",
+            )
         }
 
         val zone = ZoneId.systemDefault()

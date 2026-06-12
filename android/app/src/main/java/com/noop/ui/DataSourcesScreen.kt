@@ -191,7 +191,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
     val hcPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { granted ->
-        if (granted.containsAll(HealthConnectImporter.PERMISSIONS)) {
+        if (granted.any { it in HealthConnectImporter.PERMISSIONS }) {
             runImport { HealthConnectImporter.import(context, vm.repo) }
         } else {
             Toast.makeText(context, "Health Connect access not granted.", Toast.LENGTH_LONG).show()
@@ -208,7 +208,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
             val granted = runCatching {
                 HealthConnectImporter.client(context).permissionController.getGrantedPermissions()
             }.getOrDefault(emptySet())
-            if (granted.containsAll(HealthConnectImporter.PERMISSIONS)) {
+            if (granted.any { it in HealthConnectImporter.PERMISSIONS }) {
                 runImport { HealthConnectImporter.import(context, vm.repo) }
             } else {
                 hcPermissionLauncher.launch(HealthConnectImporter.PERMISSIONS)

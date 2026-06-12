@@ -566,7 +566,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val granted = runCatching {
                     HealthConnectImporter.client(appContext).permissionController.getGrantedPermissions()
                 }.getOrDefault(emptySet())
-                if (!granted.containsAll(HealthConnectImporter.PERMISSIONS)) return@withContext false
+                // Partial permissions are fine (#150): auto-import as long as at least one type is granted.
+                if (granted.none { it in HealthConnectImporter.PERMISSIONS }) return@withContext false
                 runCatching { HealthConnectImporter.import(appContext, repository) }.isSuccess
             }
             if (ran) {
