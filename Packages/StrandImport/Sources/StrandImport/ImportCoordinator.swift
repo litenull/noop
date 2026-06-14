@@ -23,8 +23,22 @@ public struct ImportCoordinator {
     // MARK: - Explicit-kind entry points
 
     /// Parse an Apple Health export (`export.zip`, `export.xml`, or a folder).
-    public func importAppleHealth(from url: URL) throws -> AppleHealthImportResult {
-        try appleHealth.import(from: url)
+    ///
+    /// `retainRawSamples` defaults to `true` so existing call sites and tests get
+    /// the raw `samples` array. The app's import path passes `false` so a
+    /// multi-year export is folded into per-day aggregates incrementally and the
+    /// raw samples are dropped, keeping peak memory bounded (issue #355).
+    public func importAppleHealth(
+        from url: URL,
+        retainRawSamples: Bool = true
+    ) throws -> AppleHealthImportResult {
+        // Reuse the injected importer when its flag already matches (keeps any
+        // custom importer the caller supplied); otherwise build one with the
+        // requested retention so callers can opt into bounded memory per-call.
+        if retainRawSamples == appleHealth.retainRawSamples {
+            return try appleHealth.import(from: url)
+        }
+        return try AppleHealthImporter(retainRawSamples: retainRawSamples).import(from: url)
     }
 
     /// Parse a Whoop CSV export (`.zip` or folder).

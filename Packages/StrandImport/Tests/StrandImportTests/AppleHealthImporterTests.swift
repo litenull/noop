@@ -250,6 +250,66 @@ final class AppleHealthImporterTests: XCTestCase {
         XCTAssertEqual(result.samples.first?.sourceName, "caf\u{00E9}meter")
     }
 
+    // MARK: - Bounded-memory path (issue #355)
+
+    /// With `retainRawSamples:false` the importer must NOT hold the raw
+    /// `[HealthSample]` array, yet its pre-folded `sampleDailies` must equal the
+    /// batch fold of the SAME export parsed with retention on. This proves the
+    /// incremental (bounded) fold == the batch fold, and that the app path can
+    /// safely drop the raw samples.
+    func testBoundedPathDropsRawSamplesButMatchesBatchFold() throws {
+        let data = Fixtures.data(fixtureName)
+        XCTAssertFalse(data.isEmpty, "\(fixtureName) fixture missing")
+
+        // Retain-on: raw samples present, sampleDailies left empty (batch path).
+        let retained = try AppleHealthImporter(retainRawSamples: true).importXML(data: data)
+        XCTAssertFalse(retained.samples.isEmpty, "retain:true must keep raw samples")
+
+        // Retain-off: raw samples dropped, sampleDailies pre-folded incrementally.
+        let bounded = try AppleHealthImporter(retainRawSamples: false).importXML(data: data)
+        XCTAssertTrue(bounded.samples.isEmpty, "retain:false must drop raw samples")
+
+        // The incremental fold must equal the batch fold over the same samples.
+        let batch = AppleHealthAggregator.daily(samples: retained.samples)
+        XCTAssertEqual(bounded.sampleDailies, batch,
+                       "incremental fold must match batch daily() exactly")
+
+        // And aggregate() must reach the SAME merged result via either path.
+        let aggBounded = AppleHealthAggregator.aggregate(bounded)
+        let aggRetained = AppleHealthAggregator.aggregate(retained)
+        XCTAssertEqual(aggBounded, aggRetained,
+                       "aggregate() must be identical whether or not raw samples were retained")
+
+        // Summary parity: recordCount + date span come from incremental tracking
+        // when samples are dropped, and must match the retained run.
+        XCTAssertEqual(bounded.summary.recordCount, retained.summary.recordCount)
+        XCTAssertEqual(bounded.summary.earliest, retained.summary.earliest)
+        XCTAssertEqual(bounded.summary.latest, retained.summary.latest)
+        XCTAssertEqual(bounded.summary.countsByCategory, retained.summary.countsByCategory)
+        // Workouts/sleep are unaffected by the flag.
+        XCTAssertEqual(bounded.workouts, retained.workouts)
+        XCTAssertEqual(bounded.sleepIntervals, retained.sleepIntervals)
+    }
+
+    /// `hasAnyRecord` (and therefore the tolerant-parse keep-partial decision)
+    /// must still fire when raw samples are dropped — a hard error after records
+    /// were seen keeps the partial result even on the bounded path.
+    func testBoundedPathHardErrorAfterRecordsKeepsPartialResult() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <HealthData>
+         <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="W" unit="count/min" startDate="2024-01-02 08:00:00 +0000" endDate="2024-01-02 08:00:00 +0000" value="61"/>
+         <Record type="HKQuantityTypeIdentifierHeartRate" startDate=<<<BROKEN
+        """
+        let r = try AppleHealthImporter(retainRawSamples: false).importXML(data: Data(xml.utf8))
+        XCTAssertTrue(r.samples.isEmpty, "bounded path keeps no raw samples")
+        // The folded aggregate still carries the one good day, and the tail is
+        // surfaced as a skipped span (proves hasAnyRecord used anyRecordSeen).
+        XCTAssertEqual(r.sampleDailies.count, 1)
+        XCTAssertEqual(r.summary.recordCount, 1)
+        XCTAssertGreaterThanOrEqual(r.summary.skippedSpans, 1)
+    }
+
     // MARK: - Unknown elements tolerated
 
     func testUnknownElementsTolerated() throws {

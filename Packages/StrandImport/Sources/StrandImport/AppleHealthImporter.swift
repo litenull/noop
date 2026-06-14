@@ -18,7 +18,17 @@ import ZIPFoundation
 /// - Dates `yyyy-MM-dd HH:mm:ss Z` parsed with `Locale(en_US_POSIX)`.
 public struct AppleHealthImporter {
 
-    public init() {}
+    /// When `true` (the default) the parsed `[HealthSample]` array is retained on
+    /// the result — what every existing test and call site expects. The app's
+    /// real import path passes `false` so a multi-year export is folded into
+    /// per-day aggregates incrementally and the raw samples are dropped, keeping
+    /// peak memory bounded (issue #355). The per-day `sampleDailies` are always
+    /// produced regardless of this flag.
+    public let retainRawSamples: Bool
+
+    public init(retainRawSamples: Bool = true) {
+        self.retainRawSamples = retainRawSamples
+    }
 
     /// Health types Strand cares about (prefix already stripped).
     public static let relevantTypes: Set<String> = [
@@ -151,7 +161,7 @@ public struct AppleHealthImporter {
         _ parser: XMLParser,
         sanitizer: SanitizingInputStream? = nil
     ) throws -> AppleHealthImportResult {
-        let delegate = HealthXMLDelegate()
+        let delegate = HealthXMLDelegate(retainRawSamples: retainRawSamples)
         parser.delegate = delegate
         parser.shouldProcessNamespaces = false
         let ok = parser.parse()
@@ -182,13 +192,35 @@ public struct AppleHealthImporter {
         if fm.fileExists(atPath: direct.path) { return direct }
         let nested = folder.appendingPathComponent("apple_health_export/export.xml")
         if fm.fileExists(atPath: nested.path) { return nested }
-        // Otherwise search.
+        // Otherwise search for an "export.xml" by name (any depth, case-insensitive).
         if let e = fm.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
             for case let u as URL in e where u.lastPathComponent.lowercased() == "export.xml" {
                 return u
             }
         }
+        // LOCALISED export: a non-English Health app names the root file in the
+        // device locale (e.g. `экспорт.xml`, `エクスポート.xml`), not `export.xml`.
+        // As a last resort accept a single `.xml` file at the folder root (or in
+        // `apple_health_export/`). Only act when there is EXACTLY one candidate so
+        // we never guess wrong amid several XML files.
+        let exportSub = folder.appendingPathComponent("apple_health_export")
+        for dir in [folder, exportSub] {
+            if let only = soleXMLFile(directlyIn: dir) { return only }
+        }
         return nil
+    }
+
+    /// The single `*.xml` file directly inside `dir` (non-recursive), or `nil` if
+    /// `dir` doesn't exist, has no `.xml` files, or has more than one.
+    private func soleXMLFile(directlyIn dir: URL) -> URL? {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        let xmls = entries.filter { $0.pathExtension.lowercased() == "xml" }
+        return xmls.count == 1 ? xmls[0] : nil
     }
 }
 
@@ -196,12 +228,41 @@ public struct AppleHealthImporter {
 
 final class HealthXMLDelegate: NSObject, XMLParserDelegate {
 
+    /// When `false`, parsed samples are folded into `dailyAcc` and then dropped
+    /// rather than retained in `samples`, so a multi-year export stays within a
+    /// bounded memory budget (issue #355). `true` keeps the raw array for
+    /// callers/tests that need it.
+    let retainRawSamples: Bool
+
+    init(retainRawSamples: Bool = true) {
+        self.retainRawSamples = retainRawSamples
+        super.init()
+    }
+
     // Outputs
     private(set) var samples: [HealthSample] = []
     private(set) var workouts: [HealthWorkout] = []
     private(set) var sleepIntervals: [SleepStageInterval] = []
     private(set) var countsByType: [String: Int] = [:]
     private(set) var parseError: Error?
+
+    /// Running per-day fold of every (deduped) sample. Always maintained — it is
+    /// the bounded-memory aggregate the app consumes and is also produced when
+    /// raw samples are retained, so the two paths share one reduction.
+    private var dailyAcc = AppleDailySampleAccumulator()
+
+    /// True once at least one usable record/workout/sleep row was seen. Tracked
+    /// independently of `samples` because `samples` may be empty when
+    /// `retainRawSamples` is false (issue #355).
+    private var anyRecordSeen = false
+
+    // Incrementally-tracked summary inputs, so makeResult doesn't need the raw
+    // `samples` array (which may be empty).
+    private var earliestDate: Date?
+    private var latestDate: Date?
+    /// Count of distinct (post-dedupe) samples folded in — the `samples.count`
+    /// equivalent for the summary's recordCount when raw samples were dropped.
+    private var sampleCount = 0
 
     // Element nesting stack (just the element names).
     private var stack: [String] = []
@@ -214,8 +275,9 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
 
     /// True once at least one usable record/workout/sleep row was parsed. Drives the tolerant-parse
     /// decision: a hard error AFTER real data was seen keeps the partial result instead of failing.
+    /// Uses `anyRecordSeen` (not `samples`) so it still fires when raw samples are dropped.
     var hasAnyRecord: Bool {
-        !samples.isEmpty || !workouts.isEmpty || !sleepIntervals.isEmpty
+        anyRecordSeen || !workouts.isEmpty || !sleepIntervals.isEmpty
     }
 
     private let dateParser = HealthDateParser()
@@ -278,7 +340,7 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
             // Code 5 == NSXMLParserPrematureDocumentEndError can happen on empty
             // streams; treat truly empty as non-fatal only if we parsed nothing.
             if ns.code == XMLParser.ErrorCode.prematureDocumentEndError.rawValue,
-               samples.isEmpty, workouts.isEmpty, sleepIntervals.isEmpty {
+               !anyRecordSeen, workouts.isEmpty, sleepIntervals.isEmpty {
                 self.parseError = parseError
                 return
             }
@@ -316,6 +378,12 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
             )
             sleepIntervals.append(interval)
             countsByType[type, default: 0] += 1
+            anyRecordSeen = true
+            // Mirror the old summary, which spanned EVERY sleep interval's start
+            // (intervals are never deduped). Tracked here so a deduped sleep
+            // sample still contributes its start to the date span.
+            if earliestDate == nil || start < earliestDate! { earliestDate = start }
+            if latestDate == nil || start > latestDate! { latestDate = start }
 
             // Also record a generic sample so the row survives in the sink with
             // its raw value string (dedupe-protected).
@@ -371,9 +439,22 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
             tzOffsetMin: tzOffsetMin,
             sourceName: sourceName
         )
-        // Dedupe on type+start+end+source+value.
+        // Dedupe on type+start+end+source+value (correctness-critical; the
+        // dedupe set is the smaller, retained cost).
         if seenSampleKeys.insert(sample.dedupeKey).inserted {
-            samples.append(sample)
+            // Always fold into the bounded per-day accumulator.
+            dailyAcc.add(sample)
+            anyRecordSeen = true
+            sampleCount += 1
+            // Track the date span incrementally so makeResult never needs the
+            // (possibly empty) raw `samples` array. Matches the prior summary,
+            // which spanned sample/workout/sleep `start` dates.
+            if earliestDate == nil || start < earliestDate! { earliestDate = start }
+            if latestDate == nil || start > latestDate! { latestDate = start }
+            // Only retain the raw struct when the caller asked for it.
+            if retainRawSamples {
+                samples.append(sample)
+            }
         }
     }
 
@@ -427,6 +508,11 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
         )
         workouts.append(workout)
         countsByType["Workout", default: 0] += 1
+        anyRecordSeen = true
+        // Workouts don't go through appendSample, so track their start in the
+        // incremental date span too (matches the prior summary).
+        if earliestDate == nil || start < earliestDate! { earliestDate = start }
+        if latestDate == nil || start > latestDate! { latestDate = start }
     }
 
     // MARK: Result
@@ -435,16 +521,15 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
     /// (sanitizer-scrubbed illegal-byte runs, plus 1 if a hard parse error truncated the tail) so the
     /// summary reports a partial import honestly instead of looking complete.
     func makeResult(extraSkippedSpans: Int = 0) -> AppleHealthImportResult {
-        var dates: [Date] = []
-        dates.append(contentsOf: samples.map { $0.start })
-        dates.append(contentsOf: workouts.map { $0.start })
-        dates.append(contentsOf: sleepIntervals.map { $0.start })
-
+        // Build the summary from incrementally-tracked values, NOT from `samples`
+        // (which is empty when raw samples were dropped — issue #355).
+        // `sampleCount` is the post-dedupe sample count, matching the old
+        // `samples.count`; earliest/latest span sample + workout + sleep starts.
         let summary = ImportSummary(
             sourceKind: .appleHealth,
-            recordCount: samples.count + workouts.count,
-            earliest: dates.min(),
-            latest: dates.max(),
+            recordCount: sampleCount + workouts.count,
+            earliest: earliestDate,
+            latest: latestDate,
             countsByCategory: countsByType,
             skippedSpans: extraSkippedSpans
         )
@@ -452,7 +537,8 @@ final class HealthXMLDelegate: NSObject, XMLParserDelegate {
             samples: samples,
             workouts: workouts,
             sleepIntervals: sleepIntervals,
-            summary: summary
+            summary: summary,
+            sampleDailies: dailyAcc.finish()
         )
     }
 

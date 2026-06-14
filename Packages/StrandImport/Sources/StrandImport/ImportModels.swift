@@ -339,17 +339,27 @@ public struct AppleHealthImportResult: Sendable, Equatable {
     public var workouts: [HealthWorkout]
     public var sleepIntervals: [SleepStageInterval]
     public var summary: ImportSummary
+    /// Pre-aggregated per-day sample rows, folded incrementally by the importer
+    /// so a multi-year export never has to retain the raw `samples` array in RAM
+    /// (issue #355). When the importer kept raw samples (`retainRawSamples:true`,
+    /// the default) this is empty and `AppleHealthAggregator.aggregate` re-folds
+    /// `samples`; when it dropped them (the app path) this carries the folded
+    /// result and `samples` is empty. Defaulted to `[]` for source-compatibility
+    /// with existing call sites that build a result from raw `samples`.
+    public var sampleDailies: [AppleDailyAggregate]
 
     public init(
         samples: [HealthSample],
         workouts: [HealthWorkout],
         sleepIntervals: [SleepStageInterval],
-        summary: ImportSummary
+        summary: ImportSummary,
+        sampleDailies: [AppleDailyAggregate] = []
     ) {
         self.samples = samples
         self.workouts = workouts
         self.sleepIntervals = sleepIntervals
         self.summary = summary
+        self.sampleDailies = sampleDailies
     }
 }
 

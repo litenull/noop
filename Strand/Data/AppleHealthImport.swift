@@ -9,7 +9,12 @@ enum AppleHealthImport {
 
     @discardableResult
     static func importExport(url: URL, into store: WhoopStore, deviceId: String) async throws -> ImportSummary {
-        let result = try ImportCoordinator().importAppleHealth(from: url)
+        // retainRawSamples:false — a multi-year export is millions of HealthSample
+        // structs (hundreds of MB to >1 GB); iOS jetsam-kills the app if we hold
+        // them all (issue #355). The importer folds them into per-day aggregates
+        // incrementally and drops the raw array; `aggregate` consumes the
+        // pre-folded `sampleDailies`.
+        let result = try ImportCoordinator().importAppleHealth(from: url, retainRawSamples: false)
         let daily = AppleHealthAggregator.aggregate(result)
 
         // Apple-specific daily aggregates (steps/energy/vo2/hr/weight).
