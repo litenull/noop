@@ -131,6 +131,9 @@ fun TrendsScreen(vm: AppViewModel) {
             change = periodChange(recovery.values),
             higherIsBetter = true,
             changeFmt = { "${it.roundToInt()}" },
+            // Lift the ceiling ~6% so a near-100 peak and the now-cap halo clear the top gridline —
+            // mirrors the iOS hero's `valueRange: 0...106`.
+            chartHeadroom = 0.06f,
             footer = listOf(
                 "Avg" to (recAvg?.let { "${it.roundToInt()}" } ?: EM_DASH),
                 "Peak" to (recovery.values.maxOrNull()?.let { "${it.roundToInt()}" } ?: EM_DASH),
@@ -173,6 +176,11 @@ fun TrendsScreen(vm: AppViewModel) {
 
         // --- Recovery history strip (stands in for the macOS YearHeatStrip) ---
         RecoveryHistoryCard(days = days, range = range)
+
+        // --- Export trends report (#436) — the shareable offline PDF exporter. Mirrors the iOS
+        // TrendsView.exportReportRow footer; the gold-washed card + range picker + Export CTA are
+        // the same composable Settings hosts, so both surfaces offer it. ---
+        TrendsReportExportSection(vm)
     }
 }
 
@@ -298,6 +306,10 @@ private fun ChartCard(
     change: Double? = null,
     higherIsBetter: Boolean? = null,
     changeFmt: (Double) -> String = { "${it.roundToInt()}" },
+    // Fraction of the plot height left empty above the peak — the Android stand-in for the iOS
+    // hero's `valueRange: 0...106` padded ceiling, so the peak + now-cap halo clear the top
+    // gridline. 0 keeps the curve filling the full height (the small multiples). (#458/parity)
+    chartHeadroom: Float = 0f,
 ) {
     NoopCard(modifier = modifier, padding = Metrics.cardPadding, tint = tint) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -310,7 +322,8 @@ private fun ChartCard(
                     }
                 }
                 if (trailing != null) {
-                    Text(trailing, style = NoopType.chartValueLarge, color = color)
+                    // Neutral 15pt readout (matches iOS TrendsView) — not the 22sp tinted figure.
+                    Text(trailing, style = NoopType.bodyNumber, color = Palette.textPrimary)
                 }
             }
 
@@ -318,7 +331,14 @@ private fun ChartCard(
             // Y-axis column on the left and a first/mid/last date X-axis row underneath, so the
             // line reads against real numbers and dates instead of a bare unlabelled curve.
             if (values.size >= 2) {
-                ChartWithAxes(values = values, dates = dates, color = color, tipColor = tipColor, formatY = formatY)
+                ChartWithAxes(
+                    values = values,
+                    dates = dates,
+                    color = color,
+                    tipColor = tipColor,
+                    formatY = formatY,
+                    headroom = chartHeadroom,
+                )
             } else {
                 SparsePlaceholder()
             }
@@ -357,6 +377,8 @@ private fun ChartWithAxes(
     color: Color,
     formatY: (Double) -> String,
     tipColor: Color = color,
+    // See ChartCard.chartHeadroom — fraction of the plot left empty above the peak.
+    headroom: Float = 0f,
 ) {
     val maxV = values.max()
     val avgV = values.average()
@@ -377,15 +399,28 @@ private fun ChartWithAxes(
             // The shared LineChart with a glowing "now" end-cap drawn on top — the Bevel idiom from
             // Today's OverviewHRChart. The cap reproduces LineChart's own point geometry (same
             // strokePx/topPad/bottomPad) so the dot lands exactly on the line's final sample.
-            Box(modifier = Modifier.weight(1f).height(Metrics.chartHeight)) {
-                LineChart(
-                    values = values,
-                    modifier = Modifier.fillMaxSize(),
-                    color = color,
-                    fill = true,
-                    selectionEnabled = true,
-                )
-                GlowEndCap(values = values, tipColor = tipColor)
+            //
+            // headroom leaves the top fraction of the card empty and pins the plotting Box to the
+            // bottom — the Android stand-in for the iOS hero's `valueRange: 0...106` (LineChart has
+            // no value-domain hook, so we shrink its drawing box instead). Both LineChart and the
+            // GlowEndCap fill this same Box, so the cap stays on the line.
+            val plotHeight = Metrics.chartHeight * (1f - headroom.coerceIn(0f, 0.5f))
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(Metrics.chartHeight),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Box(modifier = Modifier.fillMaxWidth().height(plotHeight)) {
+                    LineChart(
+                        values = values,
+                        modifier = Modifier.fillMaxSize(),
+                        color = color,
+                        fill = true,
+                        selectionEnabled = true,
+                    )
+                    GlowEndCap(values = values, tipColor = tipColor)
+                }
             }
         }
         if (dates.size >= 2) {

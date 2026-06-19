@@ -30,13 +30,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.Battery5Bar
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
@@ -53,6 +54,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -79,11 +81,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import android.app.DatePickerDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.analytics.Baselines
 import com.noop.analytics.ReadinessEngine
@@ -100,6 +104,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.time.temporal.ChronoUnit
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -395,99 +401,32 @@ fun TodayScreen(
         )
     }
 
-    // Consecutive run of nights with a banked sleep total, counting back from the logical day —
-    // a small "kept the strap on" streak shown beside the live battery in the header. Honest: it
-    // counts only days that actually recorded sleep, and tolerates today not being scored yet by
-    // starting from yesterday. Recomputes when the history window changes.
-    val nightStreakLen = remember(days, todayDate) { nightStreak(days, todayDate) }
-
     ScreenScaffold(
-        title = "Control Center",
-        subtitle = "Your day, read in full",
-        leading = {
-            // Leading profile avatar — opens Settings, mirroring the iOS Today header (where the
-            // avatar leads and opens Settings). The optional on-device photo shows here when set, else
-            // the person fallback. Tappable, with a spoken label; the global drawer hamburger in the top
-            // app bar is unchanged. The trailing "+" balances it (see the bottom-bar/scaffold comments).
-            Box(
-                modifier = Modifier
-                    .size(Metrics.iconButton)
-                    .clip(CircleShape)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onOpenSettings,
-                    )
-                    .semantics { contentDescription = "Profile and settings" },
-                contentAlignment = Alignment.Center,
-            ) {
-                ProfileAvatar(size = 28.dp)
-            }
-        },
-        trailing = {
-            // Compact top bar, trailing edge: the Support heart + the gold quick-action "+".
-            // The "+" moved here from the bottom bar (which is now four clean tabs) so it balances
-            // the header's leading title and stays one tap from the quick-action sheet — mirroring
-            // the iOS Today header where the gold "+" sits trailing after the strap battery.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Support heart in the compact top bar (the WHOOP-style redesign moved it off the old
-                // "At a glance" hero header). The donation entry point — keep it discoverable.
-                IconButton(onClick = onSupport, modifier = Modifier.size(Metrics.iconButton)) {
-                    Icon(
-                        Icons.Filled.Favorite,
-                        contentDescription = "Support NOOP",
-                        tint = Palette.metricRose,
-                        modifier = Modifier.size(Metrics.iconSmall),
-                    )
-                }
-                Spacer(Modifier.width(Metrics.space8))
-                // The Updates "ringer" — between the heart and the +. Bell with a gold unread badge.
-                if (updateStore != null) {
-                    UpdateBell(unreadCount = updateStore.unreadCount, onClick = onOpenUpdates)
-                    Spacer(Modifier.width(Metrics.space8))
-                }
-                QuickActionDisc(onClick = onQuickActions)
-            }
-        },
+        // title = null suppresses the big scaffold header (the nullable-title path); the compact
+        // WHOOP-style top bar below replaces it, mirroring the iOS Today screen (todayTopBar).
+        title = null,
+        // Tighten the top inset now the big title is gone (Compose forbids negative padding, so this
+        // expresses iOS's `.padding(top: -16)` as a smaller scaffold top padding).
+        topPadding = 12.dp,
     ) {
-        // Live battery (when connected) + the recorded-nights streak, right-aligned above the day
-        // selector. Both icons carry a spoken contentDescription so the row reads cleanly aloud.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (live.connected && live.batteryPct != null) {
-                val batteryPct = live.batteryPct!!.roundToInt()
-                Icon(
-                    Icons.Filled.Battery5Bar,
-                    contentDescription = "Strap battery $batteryPct percent",
-                    tint = Palette.textTertiary,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    "$batteryPct%",
-                    style = NoopType.footnote,
-                    color = Palette.textTertiary,
-                    modifier = Modifier.padding(start = Metrics.space2, end = Metrics.space12),
-                )
-            }
-            if (nightStreakLen > 0) {
-                val streakColor = if (nightStreakLen >= 2) Palette.statusCritical else Palette.textTertiary
-                Icon(
-                    Icons.Filled.LocalFireDepartment,
-                    contentDescription = "$nightStreakLen night recording streak",
-                    tint = streakColor,
-                    modifier = Modifier.size(14.dp),
-                )
-                Text(
-                    "$nightStreakLen",
-                    style = NoopType.footnote,
-                    color = streakColor,
-                    modifier = Modifier.padding(start = Metrics.space2),
-                )
-            }
-        }
+        // Compact top bar: profile/settings avatar (leading) · ‹ day-nav › (centred, bold, tap-to-pick)
+        // · strap battery → bell → + (trailing cluster). Replaces the big title + the standalone
+        // full-width day-selector pill (WHOOP-style). The day-nav label is driven by THIS screen's own
+        // selectedDayOffset/selectedDay (not DayNavBar's internal LocalDate.now()) so the header label
+        // and the data day never drift. The night-streak chip is dropped (no iOS equivalent).
+        TodayTopBar(
+            dayLabel = dayNavShortLabel(selectedDayOffset, selectedDay),
+            selectedDay = selectedDay,
+            canGoNewer = selectedDayOffset > 0,
+            onOlder = { selectedDayOffset += 1 },
+            onNewer = { if (selectedDayOffset > 0) selectedDayOffset -= 1 },
+            onPickDay = { offset -> selectedDayOffset = offset },
+            batteryPct = if (live.connected) live.batteryPct?.roundToInt() else null,
+            updateStore = updateStore,
+            onOpenUpdates = onOpenUpdates,
+            onQuickActions = onQuickActions,
+            onOpenSettings = onOpenSettings,
+        )
 
         // One-time "New here?" card pointing at the scoring guide. Opening the guide marks it seen for
         // good (ScoringGuidePrefs); the × instead dismisses it INTO the Updates inbox (restorable from
@@ -507,8 +446,6 @@ fun TodayScreen(
                 },
             )
         }
-
-        DaySelectorBar(selectedOffset = selectedDayOffset, onSelect = { selectedDayOffset = it })
 
         // When there is no daily score yet (today's recovery is null / no history),
         // lead with the "live now, history one import away" note so the empty tiles
@@ -650,6 +587,10 @@ fun TodayScreen(
         TodayWorkoutsSection(footer.recentWorkouts)
         // Honest, dismissible 12-hourly donation ask — a card in the flow, never a dialog.
         DonationNudgeCard()
+        // Support — an in-content card (heart.fill in metricRose, "Donate or get in touch — totally
+        // optional.", chevron). The Support heart left the header cluster for parity with iOS, where
+        // Support is an in-flow supportRow near the donation nudge (still reachable via More → Support).
+        SupportRow(onSupport = onSupport)
         // Strap battery only while the link is up AND a real reading exists — a stale % from a
         // dropped connection must not present as live (#159).
         TodaySourcesSection(footer, strapBatteryPct = if (live.connected) live.batteryPct?.roundToInt() else null)
@@ -859,9 +800,212 @@ private fun ScoringGuideIntroCard(onOpen: () -> Unit, onDismiss: () -> Unit) {
     }
 }
 
+// MARK: - Today compact top bar (iOS TodayView.todayTopBar)
+//
+// One ~36dp row: profile/settings avatar (leading) · ‹ day-nav › (centred, bold, tap-to-pick) · strap
+// battery → bell → + (trailing cluster). Replaces the big scaffold title + the standalone full-width
+// day-selector pill (WHOOP-style). The centre day-nav and the side clusters are layered in a Box so the
+// day-nav stays optically centred regardless of cluster width — the same as iOS's ZStack.
+
+/** The short day-nav label: Today / Yesterday / "EEE d MMM", driven by the screen's own offset + day
+ *  (NOT LocalDate.now()) so the header label and the data day never drift. */
+private fun dayNavShortLabel(selectedOffset: Int, selectedDay: LocalDate): String = when (selectedOffset) {
+    0 -> "Today"
+    1 -> "Yesterday"
+    else -> selectedDay.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.US))
+}
+
 @Composable
-private fun DaySelectorBar(selectedOffset: Int, onSelect: (Int) -> Unit) {
-    DayNavBar(selectedOffset = selectedOffset, onSelect = onSelect)
+private fun TodayTopBar(
+    dayLabel: String,
+    selectedDay: LocalDate,
+    canGoNewer: Boolean,
+    onOlder: () -> Unit,
+    onNewer: () -> Unit,
+    onPickDay: (Int) -> Unit,
+    batteryPct: Int?,
+    updateStore: UpdateStore?,
+    onOpenUpdates: () -> Unit,
+    onQuickActions: () -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    if (showPicker) {
+        val context = LocalContext.current
+        DisposableEffect(selectedDay) {
+            val cal = Calendar.getInstance().apply {
+                set(selectedDay.year, selectedDay.monthValue - 1, selectedDay.dayOfMonth)
+            }
+            // Anchor the offset to the LOGICAL day (matches selectedDayOffset's anchor) so a picked date
+            // resolves to the same row the header is labelling — never drifting against LocalDate.now().
+            val anchor = logicalDayNow()
+            val dialog = DatePickerDialog(
+                context,
+                { _, year, month, day ->
+                    val picked = LocalDate.of(year, month + 1, day)
+                    val offset = ChronoUnit.DAYS.between(picked, anchor).toInt().coerceAtLeast(0)
+                    onPickDay(offset)
+                    showPicker = false
+                },
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH),
+                cal.get(Calendar.DAY_OF_MONTH),
+            ).apply {
+                datePicker.maxDate = System.currentTimeMillis()
+                setOnDismissListener { showPicker = false }
+            }
+            dialog.show()
+            onDispose { runCatching { dialog.dismiss() } }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(36.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        // Centre — the day navigator: ‹ chevron · bold tappable label (opens the date picker) · chevron ›.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Metrics.space8),
+        ) {
+            TopNavChevron(Icons.Filled.ChevronLeft, enabled = true, label = "Previous day", onClick = onOlder)
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Metrics.cornerSm))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClickLabel = "Pick a date",
+                        onClick = { showPicker = true },
+                    ),
+            ) {
+                Text(
+                    dayLabel,
+                    style = NoopType.title2.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.4.sp),
+                    color = Palette.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            TopNavChevron(
+                Icons.Filled.ChevronRight,
+                enabled = canGoNewer,
+                label = "Next day",
+                onClick = { if (canGoNewer) onNewer() },
+            )
+        }
+        // Sides — profile/settings (leading) + the battery → bell → + cluster (trailing).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(Metrics.iconButton)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onOpenSettings,
+                    )
+                    .semantics { contentDescription = "Profile and settings" },
+                contentAlignment = Alignment.Center,
+            ) {
+                ProfileAvatar(size = 26.dp)
+            }
+            Spacer(Modifier.weight(1f))
+            // Strap-battery badge (when connected + a live reading exists): percentage + a small glyph.
+            if (batteryPct != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Battery5Bar,
+                        contentDescription = "Strap battery $batteryPct percent",
+                        tint = Palette.textTertiary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        "$batteryPct%",
+                        style = NoopType.footnote,
+                        color = Palette.textTertiary,
+                        modifier = Modifier.padding(start = Metrics.space2),
+                    )
+                }
+                Spacer(Modifier.width(Metrics.space8))
+            }
+            // The Updates "ringer" — between the battery and the +. Bell with a gold unread badge.
+            if (updateStore != null) {
+                UpdateBell(unreadCount = updateStore.unreadCount, onClick = onOpenUpdates)
+                Spacer(Modifier.width(Metrics.space8))
+            }
+            QuickActionDisc(onClick = onQuickActions)
+        }
+    }
+}
+
+/** A 36dp chevron hit-target for the header day-nav: accent when enabled, tertiary when disabled. */
+@Composable
+private fun TopNavChevron(
+    icon: ImageVector,
+    enabled: Boolean,
+    label: String,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Metrics.iconButton)) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (enabled) Palette.accent else Palette.textTertiary,
+            modifier = Modifier.size(Metrics.iconSmall),
+        )
+    }
+}
+
+/** In-content Support card (iOS supportRow): heart.fill in metricRose, the donation copy, a chevron.
+ *  The whole card is the tap target. Lives near the donation nudge in the Today flow. */
+@Composable
+private fun SupportRow(onSupport: () -> Unit) {
+    NoopCard(
+        modifier = Modifier
+            .clip(RoundedCornerShape(Metrics.cardRadius))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onSupport,
+            )
+            .semantics { contentDescription = "Support NOOP — donate or get in touch" },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Metrics.space14),
+        ) {
+            Icon(
+                Icons.Filled.Favorite,
+                contentDescription = null,
+                tint = Palette.metricRose,
+                modifier = Modifier.size(Metrics.iconSmall),
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(Metrics.space4),
+            ) {
+                Text("Support NOOP", style = NoopType.headline, color = Palette.textPrimary)
+                Text(
+                    "Donate or get in touch — totally optional.",
+                    style = NoopType.subhead,
+                    color = Palette.textSecondary,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = Palette.textTertiary,
+                modifier = Modifier.size(Metrics.iconSmall),
+            )
+        }
+    }
 }
 
 // MARK: - Score hero row — three Charge / Effort / Rest score rings, Charge centred + enlarged
@@ -2390,24 +2534,6 @@ private fun workoutCaption(row: WorkoutRow): String {
 
 private fun grouped(value: Int): String =
     String.format(Locale.US, "%,d", value)
-
-/**
- * Length of the current run of consecutive nights (ending at [anchor]) that banked a sleep total.
- * If [anchor] itself has no recorded sleep yet — common before the morning offload — the count
- * starts from the previous day so the streak doesn't read 0 mid-morning. Returns 0 when neither
- * the anchor nor the day before it recorded sleep.
- */
-internal fun nightStreak(days: List<DailyMetric>, anchor: LocalDate): Int {
-    val recorded = days.filter { (it.totalSleepMin ?: 0.0) > 0.0 }.map { it.day }.toHashSet()
-    if (recorded.isEmpty()) return 0
-    var cursor = if (anchor.toString() in recorded) anchor else anchor.minusDays(1)
-    var streak = 0
-    while (cursor.toString() in recorded) {
-        streak++
-        cursor = cursor.minusDays(1)
-    }
-    return streak
-}
 
 // MARK: - Key-Metrics layout editor (#251)
 //

@@ -190,7 +190,7 @@ fun ProfileAvatar(
             Icon(
                 imageVector = Icons.Outlined.AccountCircle,
                 contentDescription = contentDescription,
-                tint = Palette.textTertiary,
+                tint = Palette.textSecondary,
                 modifier = Modifier.size(size),
             )
         }

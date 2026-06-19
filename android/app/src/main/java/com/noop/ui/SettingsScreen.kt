@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -459,6 +460,52 @@ fun SettingsScreen(vm: AppViewModel) {
         // (SharedPreferences is not observable; `mutate` bumps `rev` after each write).
         @Suppress("UNUSED_VARIABLE") val tick = rev
 
+        // --- Profile photo (optional, on-device) ---
+        // Split into its own section ahead of the body-numbers Profile card, mirroring the iOS
+        // SettingsView `profilePhotoCard` (person.crop.circle, the offline blurb). A large avatar + a
+        // Choose/Change button and, once set, a Remove. Local-only and honest: the picked image is
+        // downscaled and kept on this phone, never uploaded. Reads ProfileAvatarStore.hasAvatar
+        // (snapshot state) so the controls update the instant a photo is set or cleared.
+        SettingsSection(
+            icon = Icons.Outlined.AccountCircle,
+            title = "Profile photo",
+            blurb = "Optional. Add a photo for the avatar in the top-left. Stored only on this phone — NOOP is offline, so it's never uploaded.",
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                ProfileAvatar(size = 64.dp, contentDescription = "Profile photo")
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                avatarPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
+                        ) {
+                            Text(
+                                if (ProfileAvatarStore.hasAvatar) "Change photo" else "Choose photo",
+                                style = NoopType.captionNumber,
+                            )
+                        }
+                        if (ProfileAvatarStore.hasAvatar) {
+                            OutlinedButton(
+                                onClick = { ProfileAvatarStore.clearAvatar(context) },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.statusCritical),
+                            ) { Text("Remove photo", style = NoopType.captionNumber) }
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Profile ---
         SettingsSection(
             icon = Icons.Outlined.Person,
@@ -466,49 +513,6 @@ fun SettingsScreen(vm: AppViewModel) {
             blurb = "These power your heart-rate zones, calorie estimates and recovery baselines. Keep them accurate.",
         ) {
             Column {
-                // Profile photo (optional) — a large avatar + a Choose/Change button and, once set, a
-                // Remove. Local-only and honest: the picked image is downscaled and kept on this phone,
-                // never uploaded. Reads ProfileAvatarStore.hasAvatar (snapshot state) so the row updates
-                // the instant a photo is set or cleared. Mirrors the iOS Settings profile-photo control.
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    ProfileAvatar(size = 64.dp, contentDescription = "Profile photo")
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    avatarPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                    )
-                                },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.accent),
-                            ) {
-                                Text(
-                                    if (ProfileAvatarStore.hasAvatar) "Change photo" else "Choose photo",
-                                    style = NoopType.captionNumber,
-                                )
-                            }
-                            if (ProfileAvatarStore.hasAvatar) {
-                                OutlinedButton(
-                                    onClick = { ProfileAvatarStore.clearAvatar(context) },
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Palette.statusCritical),
-                                ) { Text("Remove photo", style = NoopType.captionNumber) }
-                            }
-                        }
-                        Text(
-                            "Optional. Stored only on this device — never uploaded.",
-                            style = NoopType.footnote,
-                            color = Palette.textTertiary,
-                        )
-                    }
-                }
-                RowDivider()
                 FormRow(label = "Age") {
                     StepperField(
                         value = profile.age.toString(),

@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -163,7 +166,7 @@ private data class InsightModel(
  * numbers, matching the macOS data-display contract.
  */
 @Composable
-fun InsightsScreen(vm: AppViewModel) {
+fun InsightsScreen(vm: AppViewModel, onOpenInsightsHub: () -> Unit = {}) {
     val days by vm.recentDays.collectAsStateWithLifecycle()
 
     // Journal answers (all history): imported "my-whoop" rows UNIONED with native "noop-journal"
@@ -249,6 +252,13 @@ fun InsightsScreen(vm: AppViewModel) {
     val activityCosts = remember(workouts, days) { computeActivityCosts(workouts, days) }
 
     ScreenScaffold(title = "Insights", subtitle = "Interrogate what affects what.") {
+
+        // --- "What moves you" deep-link into the v5 Insights Hub (ranked, lag-aware ranked-effect feed +
+        //     personal alcohol/caffeine dose-response). The honest in-Insights entry point; the hub is its
+        //     own destination too. Mirrors the Swift InsightsView.whatMovesYouLink. ---
+        WhatMovesYouLink(onOpen = onOpenInsightsHub)
+
+        Spacer(Modifier.height(Metrics.sectionGap - 20.dp))
 
         // --- Native journal logging (always reachable — the account-free way in) ---
         if (preFilledFromYesterday) {
@@ -417,6 +427,62 @@ fun InsightsScreen(vm: AppViewModel) {
 
         // --- Metric relationships ---------------------------------------------
         RelationshipsSection(relationships)
+    }
+}
+
+// MARK: - "What moves you" deep-link
+//
+// A single NoopCard row into the v5 Insights Hub — the ranked, lag-aware "which of your habits actually
+// move your Charge" feed plus the personal alcohol/caffeine dose-response. Charge-world wash (chargeColor
+// tint), an accent auto_awesome glyph in a soft rounded chip, a short lag-aware blurb, and a trailing
+// chevron. One combined accessibility label so screen readers announce it as a single link. Mirrors the
+// Swift InsightsView.whatMovesYouLink.
+
+@Composable
+private fun WhatMovesYouLink(onOpen: () -> Unit) {
+    NoopCard(
+        tint = Palette.chargeColor,
+        modifier = Modifier
+            .clickable(onClick = onOpen)
+            .semantics {
+                contentDescription =
+                    "What moves you. Ranked patterns in your own data, and your dose-response."
+            },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Palette.accent.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = Palette.accent,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("What moves you", style = NoopType.headline, color = Palette.textPrimary)
+                Text(
+                    "Ranked, lag-aware: which of your habits actually move your Charge — plus your " +
+                        "personal alcohol/caffeine dose-response.",
+                    style = NoopType.footnote,
+                    color = Palette.textTertiary,
+                )
+            }
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = Palette.textTertiary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

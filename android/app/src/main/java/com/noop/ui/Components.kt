@@ -103,45 +103,60 @@ fun Modifier.frostedCardSurface(
         else Modifier
     )
     .drawBehind {
-    val wash = tint ?: Palette.accent
     val radiusPx = cornerRadius.toPx()
     val corner = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx)
 
-    // 1) Dark blue-black vertical fill.
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Palette.cardFillTop, Palette.cardFillBottom),
-            startY = 0f, endY = size.height,
-        ),
-        cornerRadius = corner,
-    )
-    // 2) Faint diagonal accent hue wash over the navy fill (top-leading → bottom-trailing).
-    drawRoundRect(
-        brush = Brush.linearGradient(
-            colorStops = arrayOf(
-                0.0f to wash.copy(alpha = 0.08f * washStrength),
-                0.5f to wash.copy(alpha = 0.02f * washStrength),
-                1.0f to Color.Transparent,
+    if (tint == null) {
+        // NEUTRAL card (iOS FrostedCardSurface tint == nil): a FLAT raised surface — no vertical
+        // bevel gradient, no accent wash, and a PLAIN hairline border (no accent bias).
+        drawRoundRect(
+            color = Palette.surfaceRaised,
+            cornerRadius = corner,
+        )
+        drawRoundRect(
+            color = Palette.hairline,
+            cornerRadius = corner,
+            style = Stroke(width = 1.dp.toPx()),
+        )
+    } else {
+        // TINTED card: the per-domain bevel — navy vertical fill, faint diagonal hue wash and a
+        // hue-biased hairline border.
+        // 1) Dark blue-black vertical fill.
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Palette.cardFillTop, Palette.cardFillBottom),
+                startY = 0f, endY = size.height,
             ),
-            start = Offset(0f, 0f),
-            end = Offset(size.width, size.height),
-        ),
-        cornerRadius = corner,
-    )
-    // 3) Flat 1px hairline border (no shadow) with a faint top sheen + accent bias.
-    drawRoundRect(
-        brush = Brush.linearGradient(
-            colorStops = arrayOf(
-                0.0f to Palette.hairlineStrong.copy(alpha = 0.55f),
-                0.5f to Palette.hairline,
-                1.0f to wash.copy(alpha = 0.14f),
+            cornerRadius = corner,
+        )
+        // 2) Faint diagonal accent hue wash over the navy fill (top-leading → bottom-trailing).
+        drawRoundRect(
+            brush = Brush.linearGradient(
+                colorStops = arrayOf(
+                    0.0f to tint.copy(alpha = 0.08f * washStrength),
+                    0.5f to tint.copy(alpha = 0.02f * washStrength),
+                    1.0f to Color.Transparent,
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(size.width, size.height),
             ),
-            start = Offset(0f, 0f),
-            end = Offset(size.width, size.height),
-        ),
-        cornerRadius = corner,
-        style = Stroke(width = 1.dp.toPx()),
-    )
+            cornerRadius = corner,
+        )
+        // 3) Flat 1px hairline border (no shadow) with a faint top sheen + accent bias.
+        drawRoundRect(
+            brush = Brush.linearGradient(
+                colorStops = arrayOf(
+                    0.0f to Palette.hairlineStrong.copy(alpha = 0.55f),
+                    0.5f to Palette.hairline,
+                    1.0f to tint.copy(alpha = 0.14f),
+                ),
+                start = Offset(0f, 0f),
+                end = Offset(size.width, size.height),
+            ),
+            cornerRadius = corner,
+            style = Stroke(width = 1.dp.toPx()),
+        )
+    }
 }
 
 // MARK: - NoopCard — the one card surface (Titanium & Gold frosted card, 16dp radius)
@@ -638,6 +653,7 @@ fun BevelGauge(
                     val sweepStroke = Stroke(width = stroke, cap = StrokeCap.Round)
 
                     // Frosted inner disc behind the arc — a glassy "well".
+                    val discRadius = (radius - stroke * 0.4f).coerceAtLeast(1f)
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
@@ -647,8 +663,15 @@ fun BevelGauge(
                             center = center,
                             radius = radius,
                         ),
-                        radius = (radius - stroke * 0.4f).coerceAtLeast(1f),
+                        radius = discRadius,
                         center = center,
+                    )
+                    // Faint hairline rim around the inner disc (iOS innerDisc strokeBorder hairline 0.5).
+                    drawCircle(
+                        color = Palette.hairline.copy(alpha = 0.5f),
+                        radius = discRadius,
+                        center = center,
+                        style = Stroke(width = 1.dp.toPx()),
                     )
 
                     // Outer bloom — a soft, lower-opacity wide arc (drawn first, under the track).
@@ -668,9 +691,10 @@ fun BevelGauge(
                         )
                     }
 
-                    // Faint full-span track.
+                    // Full-span track — the carved inset "well" the arc sits in (iOS: solid surfaceInset,
+                    // full opacity, same round cap), not a faint hairline.
                     drawArc(
-                        color = Palette.hairline.copy(alpha = 0.6f),
+                        color = Palette.surfaceInset,
                         startAngle = startDeg,
                         sweepAngle = spanDeg,
                         useCenter = false,
@@ -691,14 +715,16 @@ fun BevelGauge(
                             style = sweepStroke,
                         )
 
-                        // Clean Material end-cap: a small solid coloured dot + white core, no soft halo.
+                        // Clean Material end-cap (iOS BevelGauge.endCap): a single small tipCore dot with a
+                        // faint tip-coloured overlay — half the old size, no saturated full-colour disc and
+                        // no hard white centre pip ("the dot" the maintainer flagged).
                         val tipAngle = Math.toRadians((startDeg + spanDeg * animatedFraction).toDouble())
                         val bead = Offset(
                             center.x + radius * cos(tipAngle).toFloat(),
                             center.y + radius * sin(tipAngle).toFloat(),
                         )
-                        drawCircle(color = tipColor, radius = stroke * 0.7f, center = bead)
-                        drawCircle(color = Palette.tipCore, radius = stroke * 0.3f, center = bead)
+                        drawCircle(color = Palette.tipCore, radius = stroke * 0.35f, center = bead)
+                        drawCircle(color = tipColor.copy(alpha = 0.35f), radius = stroke * 0.35f, center = bead)
                     }
 
                     // Brand glyph core: a small solid gold dot at the very centre — but ONLY in the
@@ -734,16 +760,27 @@ fun BevelGauge(
                     color = Palette.textPrimary,
                 )
                 if (captionText != null) {
+                    // Caption scales WITH the gauge (iOS: rounded(diameter*0.085, .medium)).
                     Text(
                         text = captionText,
-                        style = NoopType.footnote,
+                        style = NoopType.footnote.copy(
+                            fontSize = (diameter.value * 0.085f).sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
                         color = Palette.textTertiary,
                     )
                 }
                 if (stateText != null) {
+                    // State word scales with the gauge so it never overflows the small three-up rings
+                    // (#403): stateSize = min(11, diameter*0.085), with the overline tracking scaled to
+                    // match. Pinned to the original 11pt on the large solo-hero rings (≥130dp).
+                    val stateSize = minOf(11f, diameter.value * 0.085f)
                     Text(
                         text = stateText,
-                        style = NoopType.overline,
+                        style = NoopType.overline.copy(
+                            fontSize = stateSize.sp,
+                            letterSpacing = (NoopType.overlineTracking * stateSize / 11f).sp,
+                        ),
                         color = tipColor,
                         modifier = Modifier.padding(top = 2.dp),
                     )
@@ -815,24 +852,35 @@ fun GlowRing(
                 color = trackColor, startAngle = 0f, sweepAngle = 360f, useCenter = false,
                 topLeft = tl, size = arcSize, style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
-            val sweep = animFraction.coerceIn(0.0001f, 1f) * 360f
-            // Tight glow — a wider, low-alpha arc under the crisp one (minSdk-safe, no RenderEffect).
-            drawArc(
-                color = color.copy(alpha = 0.38f), startAngle = -90f, sweepAngle = sweep, useCenter = false,
-                topLeft = tl, size = arcSize, style = Stroke(width = stroke * 1.5f, cap = StrokeCap.Round),
-            )
-            // The crisp, solid arc — from 12 o'clock clockwise.
-            drawArc(
-                color = color, startAngle = -90f, sweepAngle = sweep, useCenter = false,
-                topLeft = tl, size = arcSize, style = Stroke(width = stroke, cap = StrokeCap.Round),
-            )
+            val sweep = animFraction.coerceIn(0f, 1f) * 360f
+            // Only draw the arc (+ its glow) when there's ACTUAL progress. A near-zero round-capped
+            // arc renders as a full visible dot at 12 o'clock on Android's Canvas (unlike iOS's
+            // sub-pixel `trim`), which read as the unwanted "dot" on empty / No-Data / Calibrating
+            // rings the maintainer flagged. Below the threshold we show just the clean full-circle
+            // track — exactly like the iOS GlowRing's empty state.
+            if (animFraction > 0.001f) {
+                // Tight glow — a wider, low-alpha arc under the crisp one (minSdk-safe, no RenderEffect).
+                // Gated on the dark canvas only, mirroring iOS AdditiveBloom hiding on the light field
+                // (on white it just smears the edge); the crisp arc carries the ring on its own there.
+                if (!Palette.isLight) {
+                    drawArc(
+                        color = color.copy(alpha = 0.45f), startAngle = -90f, sweepAngle = sweep, useCenter = false,
+                        topLeft = tl, size = arcSize, style = Stroke(width = stroke * 1.5f, cap = StrokeCap.Round),
+                    )
+                }
+                // The crisp, solid arc — from 12 o'clock clockwise.
+                drawArc(
+                    color = color, startAngle = -90f, sweepAngle = sweep, useCenter = false,
+                    topLeft = tl, size = arcSize, style = Stroke(width = stroke, cap = StrokeCap.Round),
+                )
+            }
         }
         if (showsLabel) {
             Text(
                 text = format(animValue.toDouble()),
                 style = TextStyle(
                     fontWeight = FontWeight.Bold,
-                    fontSize = (diameter.value * 0.34f).sp,
+                    fontSize = (diameter.value * 0.36f).sp,
                     color = Palette.textPrimary,
                 ),
                 maxLines = 1,
@@ -995,9 +1043,14 @@ fun ScenicHeroBackground(
 
 @Composable
 fun ScreenScaffold(
-    title: String,
+    title: String?,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
+    // Top inset above the content. Defaults to the standard 28dp screen padding; a screen that
+    // supplies its own compact header (Today, title = null) can pass a smaller value to tighten the
+    // gap above its first element — Compose forbids negative padding, so this is how iOS's
+    // `.padding(top: -16)` tightening is expressed.
+    topPadding: Dp = 28.dp,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -1007,27 +1060,34 @@ fun ScreenScaffold(
             .fillMaxWidth()
             .background(Palette.surfaceBase)
             .verticalScroll(rememberScrollState())
-            .padding(28.dp),
+            .padding(start = 28.dp, end = 28.dp, top = topPadding, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         // Compact top bar: an optional LEADING action (e.g. the Today profile avatar, mirroring iOS's
         // avatar-leading header), the screen title/subtitle, then an optional trailing action (e.g. the
         // Support heart on Today). Mirrors the iOS ScreenScaffold slots from the WHOOP-style redesign (#23).
-        Row(verticalAlignment = Alignment.Top) {
-            if (leading != null) {
-                leading()
-                Spacer(Modifier.width(12.dp))
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(title, style = NoopType.title1, color = Palette.textPrimary)
-                if (subtitle != null) {
-                    Text(subtitle, style = NoopType.subhead, color = Palette.textSecondary)
+        // When BOTH title and subtitle are null the large-title header block is omitted entirely, so a
+        // screen can supply its own custom header in `content` (iOS Today's compact top bar) — mirroring
+        // the iOS ScreenScaffold which only renders the header `if title != nil || subtitle != nil`.
+        if (title != null || subtitle != null) {
+            Row(verticalAlignment = Alignment.Top) {
+                if (leading != null) {
+                    leading()
+                    Spacer(Modifier.width(12.dp))
                 }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    if (title != null) {
+                        Text(title, style = NoopType.title1, color = Palette.textPrimary)
+                    }
+                    if (subtitle != null) {
+                        Text(subtitle, style = NoopType.subhead, color = Palette.textSecondary)
+                    }
+                }
+                if (trailing != null) trailing()
             }
-            if (trailing != null) trailing()
         }
         content()
     }

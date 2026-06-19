@@ -11,12 +11,11 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,7 +25,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CompareArrows
-import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.Alarm
@@ -40,7 +38,6 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Notifications
@@ -52,28 +49,20 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.noop.analytics.FusionSource
 import androidx.compose.ui.Alignment
@@ -92,7 +81,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.noop.BuildConfig
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -101,16 +89,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import kotlinx.coroutines.launch
 
 // MARK: - Navigation model
 //
-// The macOS app's sidebar holds many sections; on Android we mirror that with a
-// ModalNavigationDrawer (hamburger in the top bar) for the full grouped list, plus a unified
-// "glass" bottom bar (Today · Trends · [add] · Sleep · More) for the everyday screens, with a
-// "More" sheet that reuses the same groups — both routes reach every destination.
-// Destinations are grouped exactly as the sidebar groups them. Routes whose screens
-// belong to later waves point at a ComingSoon placeholder so the app compiles today.
+// The macOS app's sidebar holds many sections; on Android (mirroring the iOS RootTabView) we surface
+// them through a unified floating "glass" bottom bar (Today · Trends · Sleep · More) for the everyday
+// screens, with a "More" sheet that lists the full grouped set — so every destination is one tap away
+// without a global hamburger/drawer. Destinations are grouped exactly as the sidebar groups them.
+// Routes whose screens belong to later waves point at a ComingSoon placeholder so the app compiles today.
 
 /** A single drawer destination: stable route, display title, sidebar icon. */
 private enum class Destination(
@@ -194,17 +180,16 @@ private val drawerGroups: List<DrawerGroup> = listOf(
 )
 
 /**
- * App shell: a unified [GlassBottomBar] (Today · Trends · Sleep · More) and a
- * [ModalNavigationDrawer] (hamburger in a [TopAppBar] titled with the current screen),
- * both driving one [NavHost]. A single [AppViewModel] is created here and shared with
- * every screen, so the BLE connection and cached metrics stay app-wide singletons.
+ * App shell: a single [Scaffold] with a floating [GlassBottomBar] (Today · Trends · Sleep · More)
+ * driving one [NavHost], mirroring the iOS RootTabView. There is NO global toolbar and no nav drawer
+ * — every screen self-titles via [ScreenScaffold], and the "More" sheet (opened from the bar) reaches
+ * every destination in [drawerGroups], so nothing is lost. A single [AppViewModel] is created here and
+ * shared with every screen, so the BLE connection and cached metrics stay app-wide singletons.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val nav = rememberNavController()
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
 
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
@@ -217,128 +202,14 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
     val updateStore = remember { UpdateStore.from(context) }
     var showUpdatesInbox by remember { mutableStateOf(false) }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = Palette.surfaceRaised,
-                drawerContentColor = Palette.textPrimary,
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 16.dp),
-                ) {
-                    // Drawer header: brand glyph beside the "Strand · Instrument" lockup so the
-                    // logo reads at the top of the navigation, matching the in-app top bar.
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 12.dp),
-                    ) {
-                        BrandMark(size = 22.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Overline(
-                                "Strand",
-                                modifier = Modifier.padding(bottom = 4.dp),
-                                color = Palette.accent,
-                            )
-                            Text(
-                                "Instrument",
-                                style = NoopType.footnote,
-                                color = Palette.textTertiary,
-                            )
-                        }
-                    }
-
-                    drawerGroups.forEachIndexed { index, group ->
-                        if (index > 0) {
-                            HorizontalDivider(
-                                color = Palette.hairline,
-                                modifier = Modifier.padding(vertical = 8.dp),
-                            )
-                        }
-                        Overline(
-                            group.header,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 6.dp),
-                            color = Palette.textTertiary,
-                        )
-                        group.items.forEach { dest ->
-                            val selected = backStack?.destination?.hierarchy
-                                ?.any { it.route == dest.route } == true
-                            NavigationDrawerItem(
-                                selected = selected,
-                                onClick = {
-                                    scope.launch { drawerState.close() }
-                                    if (dest.route != currentRoute) {
-                                        nav.navigateTopLevel(dest.route)
-                                    }
-                                },
-                                icon = { Icon(dest.icon, contentDescription = null) },
-                                label = { Text(dest.title, style = NoopType.body) },
-                                colors = NavigationDrawerItemDefaults.colors(
-                                    selectedContainerColor = Palette.surfaceOverlay, // subtle neutral lift, no gold wash
-                                    unselectedContainerColor = Palette.surfaceRaised,
-                                    selectedIconColor = Palette.accent,
-                                    unselectedIconColor = Palette.textSecondary,
-                                    selectedTextColor = Palette.textPrimary,
-                                    unselectedTextColor = Palette.textSecondary,
-                                ),
-                                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                            )
-                        }
-                    }
-                }
-            }
-        },
-    ) {
+    run {
         Scaffold(
             containerColor = Palette.surfaceBase,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // Brand glyph reads in-app on every screen — the open recovery ring
-                            // ("O" of NOOP) sits just before the screen title.
-                            BrandMark(size = 22.dp)
-                            Spacer(Modifier.width(10.dp))
-                            Text(current.title, style = NoopType.title2, color = Palette.textPrimary)
-                            if (BuildConfig.ENABLE_DEMO) {
-                                Spacer(Modifier.width(10.dp))
-                                Text(
-                                    "DEMO",
-                                    style = NoopType.footnote,
-                                    color = Palette.surfaceBase,
-                                    modifier = Modifier
-                                        .background(Palette.accent, RoundedCornerShape(6.dp))
-                                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(
-                                Icons.Filled.Menu,
-                                contentDescription = "Open navigation",
-                                tint = Palette.textPrimary,
-                            )
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Palette.surfaceBase,
-                        titleContentColor = Palette.textPrimary,
-                        navigationIconContentColor = Palette.textPrimary,
-                    ),
-                )
-            },
             bottomBar = {
                 // One unified "glass" bar: four evenly-spaced tabs — Today · Trends · Sleep · More
-                // (matches the iOS FloatingTabBar refresh). The quick-action "+" moved off the bar
-                // into the Today header's top-right (balancing the avatar), so the bar is clean tabs
-                // only. The drawer stays (same destinations, grouped) so nothing moved for existing
-                // users; the bar is additive.
+                // (matches the iOS FloatingTabBar). The quick-action "+" lives in the Today header's
+                // top-right (balancing the avatar), so the bar is clean tabs only. "More" opens a sheet
+                // that reaches every grouped destination, so no destination is lost without the drawer.
                 GlassBottomBar(
                     current = current,
                     onTabSelected = { dest ->
@@ -409,7 +280,7 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                     )
                 }
                 composable(Destination.Trends.route) { TrendsScreen(viewModel) }
-                composable(Destination.Insights.route) { InsightsScreen(viewModel) }
+                composable(Destination.Insights.route) { InsightsScreen(viewModel, onOpenInsightsHub = { nav.navigateTopLevel(Destination.InsightsHub.route) }) }
                 composable(Destination.Compare.route) { CompareScreen(viewModel) }
                 composable(Destination.Health.route) {
                     HealthScreen(
@@ -596,7 +467,8 @@ private data class BarTab(val dest: Destination, val icon: ImageVector, val labe
  *  More is special-cased (it opens the sheet rather than a route), so it is appended at the call site. */
 private val barLeadingTabs = listOf(
     BarTab(Destination.Today, Icons.Outlined.GridView, "Today"),
-    BarTab(Destination.Trends, Icons.AutoMirrored.Filled.ShowChart, "Trends"),
+    // chart.line.uptrend.xyaxis on iOS — the rising-trend glyph, not a flat bar chart.
+    BarTab(Destination.Trends, Icons.AutoMirrored.Filled.TrendingUp, "Trends"),
 )
 private val barTrailingTabs = listOf(
     BarTab(Destination.Sleep, Icons.Filled.Bedtime, "Sleep"),
@@ -612,20 +484,26 @@ private fun GlassBottomBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // Clear the gesture-nav bar (home indicator) first, then add breathing room so the capsule
+            // floats free of the bottom edge rather than jamming against it — iOS clears the home-indicator
+            // safe area + 4pt; here navigationBarsPadding + 12dp gives the same lift.
             .navigationBarsPadding()
             .padding(horizontal = 22.dp)
-            .padding(bottom = 4.dp, top = 4.dp),
+            .padding(top = 4.dp, bottom = Metrics.space12),
         contentAlignment = Alignment.Center,
     ) {
         Surface(
             shape = barShape,
-            // "Glass": a translucent raised surface — a frosted island, not a hard slab. Low elevation
-            // (tonal + a soft drop shadow) reads as floating without a glow; the hairline rim crisps it.
-            color = Palette.surfaceRaised.copy(alpha = 0.92f),
+            // "Glass": a translucent raised surface — a frosted island, not a hard slab. Compose has no
+            // cheap blur, so translucency (≈0.80) + a hairline rim is the Liquid-Glass stand-in. A soft,
+            // low drop shadow reads as floating without a glow.
+            color = Palette.surfaceRaised.copy(alpha = 0.80f),
             tonalElevation = 2.dp,
-            shadowElevation = 6.dp,
+            shadowElevation = 4.dp,
             modifier = Modifier
                 .fillMaxWidth()
+                // Cap the width so the pill stays a centred floating island on tablets, not a full-bleed bar.
+                .widthIn(max = 480.dp)
                 .border(0.5.dp, Palette.hairline.copy(alpha = 0.6f), barShape),
         ) {
             Row(
@@ -692,7 +570,7 @@ private fun BarSlot(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(Metrics.iconSmall))
         Text(
             label,
             style = NoopType.footnote.copy(

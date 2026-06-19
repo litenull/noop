@@ -379,7 +379,7 @@ object Metrics {
     val gap = 12.dp           // gap between cards
     val sectionGap = 28.dp    // gap between sections
     val screenPadding = 24.dp
-    val tileHeight = 104.dp   // every metric tile is this tall
+    val tileHeight = 108.dp   // every metric tile is this tall
     val chartHeight = 220.dp
     val divider = 1.dp
     val compactChartHeight = chartHeight - 90.dp
@@ -407,9 +407,9 @@ object Metrics {
 // Helvetica Neue on Apple; on Android we use a Helvetica-Neue FontFamily where one
 // is bundled in res/font, else FontFamily.SansSerif as the documented substitute
 // (no Helvetica asset is bundled, so the platform grotesque stands in) with the same
-// sizes/weights. Numeric/live styles request tabular-ish alignment via medium/
-// semibold weights; Compose has no monospacedDigit toggle, so live values use
-// Monospace where exact non-reflow alignment is load-bearing.
+// sizes/weights. Numeric/live styles stay in the house sans and request TABULAR
+// figures via fontFeatureSettings = "tnum" (mirroring iOS .monospacedDigit()) so live
+// values don't reflow; Monospace is reserved for the `mono` raw/log style only.
 
 object NoopType {
     // Helvetica Neue family — falls back to the platform grotesque (SansSerif) when
@@ -417,10 +417,16 @@ object NoopType {
     private val sans = FontFamily.SansSerif
     private val monoFamily = FontFamily.Monospace
 
-    /** Display 64–80 / Semibold — the recovery ring number. */
+    /** Display 64–80 / Bold — the recovery ring number. Tight tracking (≈ -0.04em),
+     *  tabular figures so a changing value never reflows. Mirrors StrandFont.display. */
     fun display(size: Float = 72f) = TextStyle(
-        fontFamily = sans, fontWeight = FontWeight.SemiBold, fontSize = size.sp,
+        fontFamily = sans, fontWeight = FontWeight.Bold, fontSize = size.sp,
+        letterSpacing = displayTracking(size).sp, fontFeatureSettings = "tnum",
     )
+
+    /** The tight tracking for big display numbers (≈ -0.04em). Already applied inside
+     *  display(); exposed to mirror StrandFont.displayTracking. */
+    fun displayTracking(size: Float = 72f): Float = -size * 0.04f
 
     val title1 = TextStyle(fontFamily = sans, fontWeight = FontWeight.Bold, fontSize = 28.sp)
     val title2 = TextStyle(fontFamily = sans, fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
@@ -430,33 +436,34 @@ object NoopType {
     val caption = TextStyle(fontFamily = sans, fontWeight = FontWeight.Normal, fontSize = 12.sp)
     val footnote = TextStyle(fontFamily = sans, fontWeight = FontWeight.Normal, fontSize = 11.sp)
 
-    /** Overline 11 / Semibold, +0.8 tracking, ALL-CAPS at use site. */
+    /** Overline 11 / Bold, +1.4 tracking, ALL-CAPS at use site. */
     val overline = TextStyle(
-        fontFamily = sans, fontWeight = FontWeight.SemiBold, fontSize = 11.sp,
-        letterSpacing = 0.8.sp,
+        fontFamily = sans, fontWeight = FontWeight.Bold, fontSize = 11.sp,
+        letterSpacing = 1.4.sp,
     )
 
     /** Mono 13 — raw / log views. */
     val mono = TextStyle(fontFamily = monoFamily, fontWeight = FontWeight.Normal, fontSize = 13.sp)
 
-    /** A numeric style at an arbitrary size (Monospace so live values don't reflow). */
+    /** A numeric style at an arbitrary size — the house sans with TABULAR figures
+     *  ('tnum') so live values don't reflow. Mirrors StrandFont.number. */
     fun number(size: Float, weight: FontWeight = FontWeight.SemiBold) = TextStyle(
-        fontFamily = monoFamily, fontWeight = weight, fontSize = size.sp,
+        fontFamily = sans, fontWeight = weight, fontSize = size.sp, fontFeatureSettings = "tnum",
     )
 
     fun mono(size: Float, weight: FontWeight = FontWeight.Normal) = TextStyle(
         fontFamily = monoFamily, fontWeight = weight, fontSize = size.sp,
     )
 
-    val bodyNumber = TextStyle(fontFamily = monoFamily, fontWeight = FontWeight.Normal, fontSize = 15.sp)
-    val captionNumber = TextStyle(fontFamily = monoFamily, fontWeight = FontWeight.Medium, fontSize = 12.sp)
+    val bodyNumber = TextStyle(fontFamily = sans, fontWeight = FontWeight.Medium, fontSize = 15.sp, fontFeatureSettings = "tnum")
+    val captionNumber = TextStyle(fontFamily = sans, fontWeight = FontWeight.Medium, fontSize = 12.sp, fontFeatureSettings = "tnum")
     val metricInline = number(15f)
     val chartValue = number(18f)
     val chartValueLarge = number(22f)
     val tileValue = number(24f)
     val tileValueLarge = number(26f)
 
-    const val overlineTracking = 0.8f
+    const val overlineTracking = 1.4f
 }
 
 // MARK: - Material3 bridge
