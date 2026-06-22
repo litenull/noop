@@ -64,10 +64,10 @@ public enum StrandPalette {
 
     // MARK: Surfaces — deep navy canvas, tinted frosted cards
     // Background is a near-black navy (NOT pure black); cards float just above it.
-    public static let surfaceBase    = Color(light: "#EAE3D4", dark: "#070C16") // canvas: warm paper / deep navy (deepened so white cards pop)
-    public static let surfaceRaised  = Color(light: "#FFFFFF", dark: "#111B2A") // card fill: white / frosted navy
-    public static let surfaceOverlay = Color(light: "#FFFFFF", dark: "#15243C") // popovers / sheets / tooltips
-    public static let surfaceInset   = Color(light: "#DFD8C8", dark: "#16202F") // wells / chart insets / segmented track
+    public static let surfaceBase    = Color(light: "#F2F2F7", dark: "#0A0B0E") // Apple x WHOOP: near-black canvas / Apple light grey
+    public static let surfaceRaised  = Color(light: "#FFFFFF", dark: "#16181D") // Apple x WHOOP: dark rounded card fill
+    public static let surfaceOverlay = Color(light: "#FFFFFF", dark: "#1C1F26") // popovers / sheets / tooltips
+    public static let surfaceInset   = Color(light: "#E9E9EE", dark: "#1F2229") // wells / chart insets / segmented track
     public static let hairline       = Color(light: "#D8D0BD", dark: "#21304A") // soft 1px border (stronger on light for card edges)
     public static let hairlineStrong = Color(light: "#C7BCA4", dark: "#2E3C57") // hover / emphasis border
 
@@ -222,7 +222,7 @@ public enum StrandPalette {
     // full red→green / blue / green→red in Classic regardless of these.
 
     /// Charge (recovery) — gold world / Classic green.
-    public static var chargeColor: Color  { isClassic ? Color(light: "#2E9E4F", dark: "#46B45A") : Color(light: "#B88421", dark: "#E8B84B") }
+    public static var chargeColor: Color  { isClassic ? Color(light: "#2E9E4F", dark: "#46B45A") : Color(light: "#248A3D", dark: "#30D158") }
     public static var chargeDeep: Color    { isClassic ? Color(light: "#207A3C", dark: "#2E9E4F") : Color(light: "#8F6212", dark: "#C8902F") }
     public static var chargeBright: Color  { isClassic ? Color(light: "#5FBE6E", dark: "#86D98E") : Color(light: "#E0B44C", dark: "#FCEBA8") }
     public static var chargeGlow: Color    { isClassic ? Color(light: "#2E9E4F", dark: "#46B45A") : Color(light: "#C8902F", dark: "#E8B84B") }
@@ -230,14 +230,14 @@ public enum StrandPalette {
     public static var chargeGradient: Gradient { Gradient(colors: [chargeDeep, chargeBright]) }
 
     /// Effort (strain) — amber world / Classic blue.
-    public static var effortColor: Color   { isClassic ? Color(light: "#3A74C4", dark: "#4A90E2") : Color(light: "#B26A1C", dark: "#D98A3D") }
+    public static var effortColor: Color   { isClassic ? Color(light: "#3A74C4", dark: "#4A90E2") : Color(light: "#C77A12", dark: "#FF9F0A") }
     public static var effortDeep: Color    { isClassic ? Color(light: "#284F9C", dark: "#2F6FCB") : Color(light: "#7E460E", dark: "#9C5A14") }
     public static var effortBright: Color  { isClassic ? Color(light: "#5E92D6", dark: "#7FB2E8") : Color(light: "#D89240", dark: "#F0A85A") }
     public static var effortGlow: Color    { isClassic ? Color(light: "#3A74C4", dark: "#4A90E2") : Color(light: "#B26A1C", dark: "#D98A3D") }
     public static var effortGradient: Gradient { Gradient(colors: [effortDeep, effortBright]) }
 
     /// Rest (sleep) — blue world / Classic indigo.
-    public static var restColor: Color     { isClassic ? Color(light: "#3A80D6", dark: "#6FA8E8") : Color(light: "#3A80D6", dark: "#4A90E2") }
+    public static var restColor: Color     { isClassic ? Color(light: "#3A80D6", dark: "#6FA8E8") : Color(light: "#0A6CD6", dark: "#0A84FF") }
     public static var restDeep: Color      { isClassic ? Color(light: "#203E73", dark: "#2A4C8F") : Color(light: "#234F9E", dark: "#2F6FCB") }
     public static var restBright: Color    { isClassic ? Color(light: "#6A4FC0", dark: "#8E6FD6") : Color(light: "#5790DA", dark: "#6FA8E8") }
     public static var restGlow: Color      { isClassic ? Color(light: "#3A80D6", dark: "#6FA8E8") : Color(light: "#3A80D6", dark: "#4A90E2") }

@@ -6,7 +6,7 @@ import SwiftUI
 // the uniform, instrument-grade look from the reference. Do not invent ad-hoc cards.
 
 public enum NoopMetrics {
-    public static let cardRadius: CGFloat = 16   // Design Reset: tighter continuous radius
+    public static let cardRadius: CGFloat = 20   // Apple x WHOOP: rounded cards
     public static let cardPadding: CGFloat = 14
     public static let gap: CGFloat = 10          // gap between cards
     public static let sectionGap: CGFloat = 16   // Design Reset: dense rhythm (was 28 — the loose air)
