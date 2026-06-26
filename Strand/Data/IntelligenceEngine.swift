@@ -448,7 +448,7 @@ final class IntelligenceEngine: ObservableObject {
                 // ── Steps test mode: 5/MG raw-counter trace ──────────────────────────────────────────────
                 // Only built when the Steps mode is on (the gate was read once before the loop). Recomputes
                 // the SAME wrap-aware @57 sum analyzeDay just ran, over the SAME `daySteps` calendar-day
-                // stream, so the reported scaledSteps equals the day's steps_est — the trace cannot diverge.
+                // stream, so the reported scaledSteps equals the day's steps_est, so the trace cannot diverge.
                 // Pure inputs, carried out so the main actor replays it tagged `.steps` in per-day order.
                 var stepsTrace: [String] = []
                 if stepsTraceActive {

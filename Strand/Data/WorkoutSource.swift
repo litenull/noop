@@ -1,6 +1,6 @@
 import Foundation
 import WhoopStore
-import StrandAnalytics   // WorkoutsTrace — the dedup-decision line formatter for the Workouts test mode
+import StrandAnalytics   // WorkoutsTrace: the dedup-decision line formatter for the Workouts test mode
 
 /// Origin of a workout row, classified from its stored `source` column. The macOS read model
 /// (`WorkoutRow`) carries no `deviceId`, so the row's origin has to be recovered from `source`.

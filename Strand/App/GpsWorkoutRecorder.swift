@@ -1,6 +1,6 @@
 import Foundation
 import CoreLocation
-import StrandAnalytics   // WorkoutsTrace + TestCentre — the GPS-fix line for the Workouts test mode
+import StrandAnalytics   // WorkoutsTrace + TestCentre: the GPS-fix line for the Workouts test mode
 
 // MARK: - GPS workout recording on Apple (#524)
 //
