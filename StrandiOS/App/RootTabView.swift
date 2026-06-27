@@ -58,7 +58,15 @@ struct RootTabView: View {
 
             FloatingTabBar(selection: $selectedTab)
         }
-        .task { await repo.refresh() }
+        .task {
+            await repo.refresh()
+            // Backup & Sync: on-launch catch-up (see RootView). Detached + utility priority so a
+            // 100MB+ whole-DB ZIP never blocks startup; gated on the auto toggle (default OFF). (Must-fix #4.)
+            let backupRepo = repo
+            Task.detached(priority: .utility) {
+                await FolderBackup.catchUpIfDue(checkpoint: { await backupRepo.checkpointForBackup() })
+            }
+        }
         // Quick-action sheet presents with the calm easing (~0.42s) per the README sheet spec —
         // the easing is applied where `quickAction` is set (see `presentQuickAction`), keeping the
         // animation scoped to the sheet rather than the whole shell.
@@ -244,6 +252,7 @@ struct RootTabView: View {
                     MoreRow("Apple Health", "heart.fill") { AppleHealthView() }
                     MoreRow("Mi Band", "figure.walk.motion") { XiaomiBandView() }
                     MoreRow("Data Sources", "externaldrive.fill") { DataSourcesView() }
+                    MoreRow("Backup & Sync", "externaldrive.fill.badge.icloud") { BackupSyncView() }
                     // #155: HealthKit-free Apple Health path for sideloaded installs (Siri Shortcut
                     // reads the opt-in Documents/noop_sync.txt drop file).
                     MoreRow("Shortcuts Export", "square.and.arrow.up.fill") { ShortcutExportSettingsView() }

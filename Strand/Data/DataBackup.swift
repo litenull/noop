@@ -114,6 +114,44 @@ enum DataBackup {
         try archive.addEntry(with: backupEntryName, fileURL: dbURL, compressionMethod: .deflate)
     }
 
+    /// (Backup & Sync) Write a `.noopbak` to a SPECIFIC `dest` URL with NO save panel: the folder /
+    /// auto-backup path. Checkpoints the WAL (so the single `.sqlite` is whole) then writes the same
+    /// deflate ZIP via the same `writeBackupZip` the interactive export uses, so folder / auto backups
+    /// are byte-identical to a manual export. The CALLER owns any security-scoped access to `dest`
+    /// (start/stop around this call). Never presents UI, so it is safe off the main actor.
+    static func writeBackup(checkpoint: @escaping () async -> Bool, to dest: URL) async -> BackupResult {
+        let dbPath: String
+        do { dbPath = try StorePaths.defaultDatabasePath() }
+        catch { return .failure("Couldn't locate the NOOP database. \(error.localizedDescription)") }
+
+        let dbURL = URL(fileURLWithPath: dbPath)
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            return .failure("There's no NOOP data to export yet.")
+        }
+        // Flush the WAL into the single file (same requirement as the interactive export: a single-file
+        // ZIP has no sidecar fallback, so committed pages still in the WAL would otherwise be absent).
+        guard await checkpoint() else {
+            return .failure("Couldn't safely back up right now. Recent changes are still in the write-ahead log.")
+        }
+        do {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+            try writeBackupZip(dbURL: dbURL, to: dest)
+            return .exported(dest)
+        } catch {
+            return .failure("Backup failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Test seam: write a `.noopbak` for an EXPLICIT source database (no checkpoint, no `StorePaths`),
+    /// so a unit test can round-trip a throwaway SQLite through the exact ZIP container the app writes.
+    /// Not used by app code; production goes through `writeBackup(checkpoint:to:)`.
+    static func writeBackupForTesting(databaseAt dbURL: URL, to dest: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+        try writeBackupZip(dbURL: dbURL, to: dest)
+    }
+
     // MARK: - Import
 
     /// Pick a `.noopbak` (ZIP) or legacy `.sqlite` backup, validate it, snapshot the current DB
@@ -145,6 +183,30 @@ enum DataBackup {
         guard let pickedSource = await DocumentPicker.importFile(backupContentTypes()) else { return .cancelled }
         #endif
 
+        // Hand the chosen file to the same hardened restore core the folder (Backup & Sync) path uses,
+        // so the unzip / magic-byte / GRDB-origin / sidecar-snapshot / rollback logic lives in one place.
+        return restore(from: pickedSource, toDatabaseAt: dbPath)
+    }
+
+    /// Restore a chosen backup file directly, with NO picker. The Backup & Sync folder flow calls this
+    /// with a snapshot it already resolved from the user's backup folder (the caller owns any
+    /// security-scoped access around the call). Runs against the live database path.
+    ///
+    /// Reuses the exact same hardened path as the picker import: ZIP extraction, SQLite magic-byte
+    /// validation, GRDB-origin rejection (a foreign-but-valid SQLite is refused), a timestamped
+    /// sidecar snapshot of the current store, and rollback-on-failure so a failed restore leaves the
+    /// live database untouched.
+    static func restore(from pickedSource: URL) -> BackupResult {
+        let dbPath: String
+        do { dbPath = try StorePaths.defaultDatabasePath() }
+        catch { return .failure("Couldn't locate the NOOP database. \(error.localizedDescription)") }
+        return restore(from: pickedSource, toDatabaseAt: dbPath)
+    }
+
+    /// The hardened restore core, with the destination database path injected so it is unit-testable
+    /// against a throwaway DB (real file I/O, never the user's live store). Behaviour is identical to
+    /// the previous `runImport` body; only the picker and path-resolution moved out to the callers.
+    static func restore(from pickedSource: URL, toDatabaseAt dbPath: String) -> BackupResult {
         // If the picked file is a .noopbak ZIP, extract the SQLite entry to a temp dir first.
         // Legacy plain-SQLite files fall straight through. The extracted dir is cleaned up below.
         let fm = FileManager.default

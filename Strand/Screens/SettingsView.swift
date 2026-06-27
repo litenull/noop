@@ -1472,6 +1472,27 @@ struct SettingsView: View {
                         .foregroundStyle(StrandPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                // Reach the scheduled / folder-based Backup & Sync screen (back up to a chosen folder on
+                // demand or about once a day, restore from a snapshot in that folder).
+                NavigationLink {
+                    BackupSyncView()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "externaldrive.fill.badge.icloud")
+                            .accessibilityHidden(true)
+                        Text("Backup & Sync to a folder…")
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(StrandFont.caption)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .font(StrandFont.subhead)
+                    .foregroundStyle(StrandPalette.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open Backup and Sync to a folder")
             }
         }
     }

@@ -75,6 +75,16 @@ class MainActivity : ComponentActivity() {
         // feature is off). Wrapped because a WorkManager hiccup must never block launch.
         runCatching { DebugExportScheduler.reschedule(applicationContext) }
 
+        // Backup & Sync (#791): self-heal the daily auto-backup schedule (no-op when off / no folder),
+        // and run a DEFERRED on-launch catch-up backup. Must-fix #4: the catch-up is gated on the toggle
+        // being ON, runs fully off the main thread on Dispatchers.IO, and is launched AFTER the
+        // launch-critical setup so a 100MB+ whole-DB zip can never block app startup. Cheap (two prefs
+        // reads) when the feature is off, which is the default.
+        runCatching { BackupSync.reschedule(applicationContext) }
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { BackupSync.catchUpIfDue(applicationContext) }
+        }
+
         // Load the Light/Dark/System + chart-colour preferences before first composition so the theme
         // and chart ramps are correct from the very first frame (no flash).
         AppearancePrefs.load(this)
