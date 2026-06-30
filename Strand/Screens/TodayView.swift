@@ -22,15 +22,6 @@ import Foundation
 // Sparse series (weight) fall back to ALL history so a tile never shows an empty
 // state when data exists. Only locked StrandDesign components are used.
 
-/// Process-lifetime guard for the #605 dashboard auto-land. Lives outside the view so it survives a view
-/// re-mount: a TabView/module switch tears Today's `@State` down and rebuilds it, and with the old `@State`
-/// flag the one-shot reset to `false` and re-snapped the dashboard back onto the strap's start day every
-/// time the user came back (#739). Static = one value per LAUNCH: the auto-land fires at most once per app
-/// run, then the user navigates freely; a genuine relaunch is the only thing that re-arms it.
-private enum TodayAutoLand {
-    static var didLandThisLaunch = false
-}
-
 /// #762: carries the hero ring ROW's measured width up so `scoreHeroRow` can size the three rings off the
 /// real available width WITHOUT wrapping them in a height-clamped GeometryReader. The old GeometryReader was
 /// pinned to `.frame(height: 150)`; once a Charge/Rest ring also showed a provenance badge (the two-line
@@ -236,10 +227,24 @@ struct TodayView: View {
     @AppStorage(Self.guideCardSeenKey) private var scoringGuideCardSeen = false
     static let guideCardSeenKey = "scoringGuideCardSeen"
 
-    /// #739: only auto-land (#605) when the newest banked day is within this many days of today. Beyond it
-    /// the data is stale enough that snapping the dashboard there on launch is more surprising than just
-    /// showing an empty today, so we leave the user on today.
-    static let autoLandMaxDaysBack = 14
+    /// #860 item 1: the launch day-landing policy, as ONE pure decision so the rule can't drift between the
+    /// view and its test and stays byte-identical to the Kotlin twin. A FRESH-PROCESS launch ALWAYS lands on
+    /// today (offset 0), even when today has no data yet and the only banked data is N days back (that exact
+    /// case is what stranded a calibrating user on an old day after an app update, the reporter's case). A
+    /// non-fresh (in-session) call returns `savedOffset` UNCHANGED, so tabbing away to an old day and coming
+    /// back within the same process preserves the user-navigated day (#739/#614). `hasTodayData` and
+    /// `latestDataDayBack` are accepted so the signature documents the inputs the retired auto-land consumed,
+    /// but on a fresh launch they intentionally have NO effect: the old "land on the most recent data day"
+    /// behaviour (#605/#739) is retired. Mirror EXACTLY in Kotlin.
+    static func launchDayOffset(isFreshLaunch: Bool,
+                                savedOffset: Int,
+                                hasTodayData: Bool,
+                                latestDataDayBack: Int) -> Int {
+        // Fresh process: snap to today unconditionally. The data-shape inputs are deliberately ignored so a
+        // calibrating user whose newest data is days back still opens on today, not on that old day.
+        guard isFreshLaunch else { return savedOffset }
+        return 0
+    }
 
     /// Dashboard-card placeholder for a baseline-relative metric (Stress) still seeding its window — an
     /// honest "building your baseline" state rather than a bare dash (#706/#684). Rendered dimmed.
@@ -3174,12 +3179,10 @@ struct TodayView: View {
     /// `refreshSeq`, which re-fires this task with `live.backfilling` false, and the deferred set runs then.
     /// Values + provenance are byte-identical to the old single-pass `loadAll` whenever each part runs.
     private func loadAll() async {
-        // Always refresh the selected day — cheap, and it's what a day-switch / return-to-tab needs.
-        // When the one-shot auto-land fires it changes `selectedDayOffset`, which re-fires this whole task
-        // for the landed day; bail here exactly as the old single-pass `loadAll` did on that `return` (skip
-        // the history-wide set + the new-day announce — the re-fired pass does both for the real day).
-        let autoLanded = await loadDayScoped()
-        guard !autoLanded else { return }
+        // Always refresh the selected day (cheap, and it's what a day-switch / return-to-tab needs). Since
+        // #860 retired the launch auto-land, this pass no longer changes `selectedDayOffset`, so there's no
+        // re-fire to bail for: the history-wide set + the new-day announce run straight through below.
+        await loadDayScoped()
         // #849: a bare Today RE-MOUNT (tab-away + return, or an Apple-Health import that recreates the view)
         // re-fires this task with TodayView's `@State` reset, so the heavy history-wide pass re-ran in full
         // every time even when NOTHING in the data had changed: hundreds of redundant reads (incl. the
@@ -3370,11 +3373,12 @@ struct TodayView: View {
     /// tile's number and its mini-graph stay consistent and day-fresh. Byte-identical to the old inline
     /// values; only the read's location moved.
     ///
-    /// Returns `true` when the one-shot #605/#739 auto-land fired and changed `selectedDayOffset` (the
-    /// caller then bails, since changing the offset re-fires the whole task for the landed day) — this
-    /// preserves the old `return` that skipped the rest of the pass.
-    @discardableResult
-    private func loadDayScoped() async -> Bool {
+    /// #860 item 1: the launch "land on the most recent data day" (#605/#739) is RETIRED. A fresh launch now
+    /// always shows today (offset 0, decided by `launchDayOffset` on the plain `@State selectedDayOffset`),
+    /// so a calibrating user whose newest data is days back is no longer stranded on that old day after an
+    /// app update. This pass therefore no longer mutates `selectedDayOffset`, so it has nothing to signal to
+    /// the caller and returns void.
+    private func loadDayScoped() async {
         // Rest series + the two provenance resolves — all day-keyed outputs, none consumes another's
         // result, so fire them concurrently and await where first used.
         async let restSeriesA       = repo.exploreSeries(key: "sleep_performance", source: "my-whoop")
@@ -3424,30 +3428,11 @@ struct TodayView: View {
         hrPoints = await repo.hrBuckets(from: windowStart, to: windowEnd, bucketSeconds: 300)
             .map { TrendPoint(date: Date(timeIntervalSince1970: TimeInterval($0.ts)), value: $0.bpm) }
 
-        // #605/#739: the first time the app opens to a today with NOTHING banked, land the dashboard on the
-        // most recent day that DOES have data instead of an empty graph (the fresh-strap / mid-backfill
-        // complaint). Two guards keep this honest after #739:
-        //   - The trigger is "today has NO DailyMetric row at all", NOT merely "no HR points". A
-        //     metadata-only strap (recovery/sleep but no streamed HR) DID bank a row for today, so the old
-        //     hrPoints.isEmpty test snapped it back onto the start day even though today had data. Only an
-        //     empty today should auto-land.
-        //   - The latest banked day must be RECENT (within the auto-land window). If a user opens the app
-        //     after a long break their newest data could be weeks old; jumping the dashboard there on launch
-        //     is more confusing than an empty today, so we leave it on today in that case.
-        // The guard is process-lifetime (TodayAutoLand), so a module switch that re-mounts the view can't
-        // reset it and re-snap (#739). One-shot per launch; the user then chevrons freely.
-        // `repo.today` is the canonical resolved today row (the same one `displayDay` shows, including the
-        // #304 local-vs-logical carve-out). Non-nil ⇒ today has banked data ⇒ never auto-land.
-        let todayHasData = repo.today != nil
-        if !TodayAutoLand.didLandThisLaunch, selectedDayOffset == 0, !todayHasData,
-           let latest = await repo.latestDataDayStart() {
-            TodayAutoLand.didLandThisLaunch = true
-            let cal = Calendar.current
-            let todayStart = cal.startOfDay(for: Repository.logicalDay(Date()))
-            let latestStart = cal.startOfDay(for: latest)
-            let back = cal.dateComponents([.day], from: latestStart, to: todayStart).day ?? 0
-            if back > 0, back <= Self.autoLandMaxDaysBack { selectedDayOffset = back; return true }
-        }
+        // #860 item 1: the launch auto-land (#605/#739 "snap to the most recent data day when today is
+        // empty") is RETIRED here. A fresh launch lands on today via `launchDayOffset` against the plain
+        // `@State selectedDayOffset` (which re-inits to 0 every process), so a calibrating user whose newest
+        // banked day is days back opens on TODAY, not on that old day. In-session day memory (#739/#614) is
+        // untouched: a tab-away + return keeps the navigated offset because this pass no longer rewrites it.
 
         // In-progress Effort for TODAY (#402): score today's strain over the SAME window the HR curve
         // above shows (logical-day midnight → now) so the gauge tracks the day live instead of lagging
@@ -3476,8 +3461,6 @@ struct TodayView: View {
         sleepToday = await repo.allSleepSessions(days: selectedDayOffset + 2)
             .filter { $0.endTs > windowStart && $0.startTs < windowEnd }
             .max(by: { ($0.endTs - $0.startTs) < ($1.endTs - $1.startTs) })
-
-        return false
     }
 
     /// Post a single honest `.reading` update to the inbox when a refresh brought in genuinely NEWER

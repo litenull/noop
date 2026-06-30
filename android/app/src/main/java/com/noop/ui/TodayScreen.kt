@@ -148,25 +148,16 @@ private const val CARD_NEW_HERE = "newHere"
 // through the multi-night calibration window. Same id on both platforms so it round-trips an export/import.
 private const val CARD_CALIBRATING = "calibratingBaseline"
 
-/** Process-lifetime guard for the #605 dashboard auto-land. A top-level var = one value per LAUNCH, which
- *  survives BOTH a recomposition AND an Activity recreation / tab-away+restore. rememberSaveable only
- *  survived the save/restore, but a full screen rebuild still re-armed the one-shot and re-snapped the
- *  dashboard back onto the strap's start day (#739). Reset only happens on a genuine fresh process. */
-private var todayDidAutoLandThisLaunch = false
-
 /** #860 item 1: process-lifetime guard for the launch snap-to-today. `selectedDayOffset` is rememberSaveable
- *  so a tab-away keeps the user's chosen day (#614). The same persistence, however, rides the saved-instance
- *  -state bundle across a system-initiated process kill + restore (common after an app UPDATE), so a user who
- *  was browsing an OLD day when the process died reopened the app pinned to that day instead of today. A
- *  top-level var = one value per LAUNCH (reset only on a genuine fresh process, like todayDidAutoLandThisLaunch
- *  above), so we can force the selected day back to today exactly once per launch and leave in-session
- *  tab-away/restore behaviour untouched. iOS parity: TodayView's selectedDayOffset is plain @State, which is
- *  never persisted and so already re-inits to 0 on every fresh launch. */
+ *  so a tab-away keeps the user's chosen day (#614/#739). The same persistence, however, rides the
+ *  saved-instance-state bundle across a system-initiated process kill + restore (common after an app UPDATE),
+ *  so a user who was browsing an OLD day when the process died - or a calibrating user the now-retired
+ *  #605/#739 auto-land would have snapped to an old day - reopened the app pinned to that day instead of
+ *  today. A top-level var = one value per LAUNCH (reset only on a genuine fresh process), so we run the pure
+ *  `launchDayOffset` policy exactly once per launch (forcing today) and leave in-session tab-away/restore
+ *  behaviour untouched. iOS parity: TodayView's selectedDayOffset is plain @State, which is never persisted
+ *  and so already re-inits to 0 on every fresh launch, reaching the same offset through the same helper. */
 private var todayDidSnapToTodayThisLaunch = false
-
-/** #739: only auto-land (#605) when the newest banked day is within this many days of today. Past this, the
- *  data is stale enough that jumping the dashboard there on launch is more surprising than an empty today. */
-private const val AUTO_LAND_MAX_DAYS_BACK = 14L
 
 /**
  * The minimal, stable slice of the BLE [com.noop.ble.LiveState] the Today top-level body reads. Pulled out
@@ -244,50 +235,37 @@ fun TodayScreen(
     // saveState/restoreState, which only restores rememberSaveable-backed state. With plain remember a
     // tab-away wiped the chosen day back to 0, so on return the dashboard "shifted" off the day the user was
     // looking at (#614 follow-up). Persisting it across the save/restore keeps the chosen day put. The
-    // #605/#739 auto-land guard is a separate process-lifetime flag (todayDidAutoLandThisLaunch below).
+    // launch snap-to-today is a separate process-lifetime flag (todayDidSnapToTodayThisLaunch below).
     var selectedDayOffset by rememberSaveable { mutableIntStateOf(0) }
     // #860 item 1: on a GENUINE fresh process (not a tab-away/recomposition), force the selected day back to
-    // today. rememberSaveable restores selectedDayOffset from the saved-instance-state bundle, which the system
-    // reuses across a process kill + restore (the after-an-update case in the report); without this, a user who
-    // was viewing an old day when the process died reopened the app stranded on that day. The top-level guard is
-    // false exactly once per launch, so this snaps to today a single time and never fights the in-session
-    // tab-away day-memory (#614) afterwards. Done in composition (not a LaunchedEffect) so the stale restored day
-    // never paints for a frame. iOS uses plain @State (re-inits to 0 every launch) and needs no equivalent.
+    // today via the pure `launchDayOffset` policy. rememberSaveable restores selectedDayOffset from the
+    // saved-instance-state bundle, which the system reuses across a process kill + restore (the after-an-update
+    // case in the report); without this, a user who was viewing an old day when the process died - OR a
+    // calibrating user the retired auto-land would have snapped to an old day - reopened the app stranded
+    // there. The top-level guard is false exactly once per launch, so `launchDayOffset(isFreshLaunch = true)`
+    // forces today a single time and never fights the in-session tab-away day-memory (#614/#739) afterwards.
+    // Done in composition (not a LaunchedEffect) so the stale restored day never paints for a frame. iOS uses
+    // plain @State (re-inits to 0 every launch) and reaches the same offset through the same helper.
     if (!todayDidSnapToTodayThisLaunch) {
         todayDidSnapToTodayThisLaunch = true
-        if (selectedDayOffset != 0) selectedDayOffset = 0
+        val landed = launchDayOffset(
+            isFreshLaunch = true,
+            savedOffset = selectedDayOffset,
+            hasTodayData = today != null,
+            latestDataDayBack = selectedDayOffset,
+        )
+        if (selectedDayOffset != landed) selectedDayOffset = landed
     }
     // Anchor offset-0 to the LOGICAL day (rolls at 04:00 local), so between midnight and 4am "Today"
     // still resolves to the prior calendar day's banked row instead of an empty new-calendar-day row
     // that blanks the dashboard (#144). Past offsets count back from this anchor. Presentation-only.
     val todayDate = logicalDayNow()
-    // #605/#739: the first time the app opens to a today with NOTHING banked, land the dashboard on the most
-    // recent day that DOES have data instead of an empty graph (fresh install, or a strap mid-backfill whose
-    // newest banked day is older than today). Two #739 fixes over the old version:
-    //   - The trigger is "today has NO row at all" (today == null off resolveTodayRow), NOT "no HR samples".
-    //     A metadata-only strap banks a recovery/sleep row for today with no streamed HR; the old hrBuckets
-    //     test treated that as empty and snapped the dashboard back onto the start day even though today had
-    //     data. Only a genuinely empty today should auto-land.
-    //   - The newest banked day must be RECENT (within AUTO_LAND_MAX_DAYS_BACK). Open the app after a long
-    //     gap and jumping weeks back on launch is more confusing than an empty today, so we stay put.
-    // The guard is process-lifetime (todayDidAutoLandThisLaunch), not view/saveable state, so a tab-away that
-    // recreates the screen can't re-arm the one-shot and re-snap the day the user navigated to (#739). It
-    // fires at most once per launch; after that the user chevrons freely. iOS parity in TodayView.
-    LaunchedEffect(days, today) {
-        if (todayDidAutoLandThisLaunch || selectedDayOffset != 0) return@LaunchedEffect
-        // Today already has a banked row -> nothing to land on; arm the guard so we don't keep re-checking.
-        if (today != null) { todayDidAutoLandThisLaunch = true; return@LaunchedEffect }
-        // No newest reading yet means data is still loading (empty initial emission) -> wait, DON'T arm the
-        // guard, otherwise a premature fire on the empty load would burn the one-shot before the strap's
-        // history arrives and we'd never land.
-        val zone = ZoneId.systemDefault()
-        val latestTs = runCatching { viewModel.repo.latestHrSampleTs("my-whoop") }.getOrNull()
-            ?: return@LaunchedEffect
-        todayDidAutoLandThisLaunch = true
-        val latestDay = logicalDay(java.time.Instant.ofEpochSecond(latestTs).atZone(zone))
-        val back = java.time.temporal.ChronoUnit.DAYS.between(latestDay, todayDate)
-        if (back in 1..AUTO_LAND_MAX_DAYS_BACK) selectedDayOffset = back.toInt()
-    }
+    // #860 item 1: the launch auto-land (#605/#739 "snap to the most recent data day when today is empty")
+    // is RETIRED. It fired on a fresh process when today had no row yet, and for a calibrating user whose
+    // newest data was a few days back it stranded them on that old day, overriding the snap-to-today above.
+    // A fresh launch now lands on today via `launchDayOffset` (the inline guard above), and in-session day
+    // memory (#739/#614) is preserved because nothing rewrites `selectedDayOffset` after launch. iOS parity
+    // in TodayView (which retired the same block).
     val selectedDay = remember(selectedDayOffset, todayDate) { todayDate.minusDays(selectedDayOffset.toLong()) }
     // The key the day-scoped read-outs (Rest score, HR window, sleep band) key on. At offset 0 it
     // follows the resolver's `today?.day` so it tracks the row actually surfaced — including the non-UTC
@@ -1524,6 +1502,29 @@ private val DAY_NAV_HINTS = listOf("Swipe", "Tap")
 // can browse arbitrarily far back), newer decrements it but is CLAMPED at 0 so a future day can never be
 // selected. These pure helpers hold that clamp so it's covered by a JVM test and shared by both the
 // arrow taps and the swipe handler, matching the iOS DayNavBar's `canGoNewer` / `selectedOffset ± 1`.
+
+/**
+ * #860 item 1: the launch day-landing policy, as ONE pure decision so the rule can't drift between the
+ * screen and its test and stays byte-identical to the iOS `TodayView.launchDayOffset` twin. A FRESH-PROCESS
+ * launch ALWAYS lands on today (offset 0), even when today has no data yet and the only banked data is N days
+ * back - that exact case is what stranded a calibrating user on an old day after an app update (the reporter's
+ * case on v7.6.0). A non-fresh (in-session) call returns [savedOffset] UNCHANGED, so tabbing away to an old
+ * day and coming back within the same process preserves the user-navigated day (#739/#614). [hasTodayData]
+ * and [latestDataDayBack] are accepted so the signature documents the inputs the retired auto-land consumed,
+ * but on a fresh launch they intentionally have NO effect - the old "land on the most recent data day"
+ * behaviour (#605/#739) is retired. Mirror EXACTLY in Swift.
+ */
+internal fun launchDayOffset(
+    isFreshLaunch: Boolean,
+    savedOffset: Int,
+    hasTodayData: Boolean,
+    latestDataDayBack: Int,
+): Int {
+    // Fresh process: snap to today unconditionally. The data-shape inputs are deliberately ignored so a
+    // calibrating user whose newest data is days back still opens on today, not on that old day.
+    if (!isFreshLaunch) return savedOffset
+    return 0
+}
 
 /** The offset for one step toward an OLDER day (previous). Unbounded above - history runs as far back as
  *  the data does. */
