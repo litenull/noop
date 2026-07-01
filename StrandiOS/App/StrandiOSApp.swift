@@ -77,7 +77,11 @@ struct StrandiOSApp: App {
                 // clipping; the common Larger-Text range still scales fully.
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .onReceive(model.live.$heartRate) { _ in
-                    let day = model.repo.days.last(where: { $0.recovery != nil })
+                    // #911: anchor the Live Activity on the SAME shared `Repository.widgetAnchor` the
+                    // Home/Lock widget and the watch snapshot use, so this fourth surface can't drift to a
+                    // different day at the rollover (it previously read `days.last(where: recovery != nil)`,
+                    // which kept pointing at yesterday's scored row after Today had moved on).
+                    let day = Repository.widgetAnchor(days: model.repo.days)
                     liveActivity.update(
                         bpm: model.live.connected ? (model.bpm ?? model.live.heartRate) : nil,
                         recovery: day?.recovery.map { Int($0.rounded()) },
@@ -87,7 +91,9 @@ struct StrandiOSApp: App {
                 }
                 // End the Live Activity the moment the link drops, even if no further HR tick arrives.
                 .onReceive(model.live.$connected) { isConnected in
-                    let day = model.repo.days.last(where: { $0.recovery != nil })
+                    // #911: same shared anchor as the heartRate site above, so the Live Activity, the
+                    // widget, the watch and Today never disagree about which day they describe.
+                    let day = Repository.widgetAnchor(days: model.repo.days)
                     liveActivity.update(
                         bpm: isConnected ? (model.bpm ?? model.live.heartRate) : nil,
                         recovery: day?.recovery.map { Int($0.rounded()) },

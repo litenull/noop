@@ -612,15 +612,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Throttled + no-op without a placed widget; never let a Glance hiccup kill the collector.
                 runCatching {
                     val live = ble.state.value
-                    val todayRow = _today.value
+                    // #911: resolve the widget anchor through the SHARED `widgetAnchorRow`, the SAME
+                    // selector the background-service producer (WhoopConnectionService) uses, so the two
+                    // producers can never drift. It anchors on today's logical-day row (rolls at 04:00,
+                    // #304 carve-out) and, when today isn't scored yet, carries over the freshest
+                    // STRICTLY-PRIOR scored day for the recovery-derived fields so the widget doesn't blank
+                    // right after the rollover and never re-surfaces a stale scored row AS today. Only the
+                    // widget reads the anchor here (the notification's honest-null contract lives in the
+                    // service), keeping the two symmetric.
+                    val anchorRow = widgetAnchorRow(days, logicalKey, localKey)
                     WidgetSnapshotStore.push(
                         appContext,
                         WidgetSnapshot(
-                            recoveryPct = todayRow?.recovery?.roundToInt(),
+                            recoveryPct = anchorRow?.recovery?.roundToInt(),
                             // Rest = the sleep_performance composite from THIS row's banked stage figures
                             // (pure, honest-null until last night is scored); Effort = the 0–100 strain. (#516)
-                            restPct = todayRow?.let { RestScorer.restFromDaily(it)?.roundToInt() },
-                            effortPct = todayRow?.strain?.roundToInt(),
+                            restPct = anchorRow?.let { RestScorer.restFromDaily(it)?.roundToInt() },
+                            effortPct = anchorRow?.strain?.roundToInt(),
                             heartRate = live.heartRate,
                             batteryPct = live.batteryPct?.roundToInt(),
                             connected = live.connected,

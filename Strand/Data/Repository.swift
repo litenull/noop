@@ -334,6 +334,36 @@ final class Repository: ObservableObject {
         }
         return days.last(where: { $0.day == logicalKey })
     }
+
+    /// #911: the SINGLE anchor every off-dashboard surface (Home/Lock widget, the watch snapshot AND the
+    /// iOS Live Activity) resolves the row it describes through, so a fourth surface can never drift its
+    /// own way again. Pure + injectable so the boundary is testable without a live clock.
+    ///
+    /// It is exactly what Today does: resolve today's row (`resolveToday`, which carries the #304 pre-04:00
+    /// local-day carve-out and the #144 anti-blank guard), then use that row when it's scored, else carry
+    /// over the freshest STRICTLY-PRIOR scored day for the recovery-derived fields. Anchoring on today's
+    /// row (not "the newest row with any recovery score") is what fixes the rollover drift: the new logical
+    /// day exists but isn't scored yet, and the old `days.last(where: recovery != nil)` still pointed at
+    /// yesterday's scored row, so the widget/wrist/Live Activity showed the older day while Today had moved
+    /// on. The `$0.day < carriedKey` bound (`carriedKey` = today's own key) mirrors
+    /// `TodayView.lastScoredRecoveryDay` + its #547 future-day guard, so a stale or stray future-dated
+    /// scored row can never re-surface AS today.
+    nonisolated static func widgetAnchor(days: [DailyMetric], logicalKey: String, localKey: String) -> DailyMetric? {
+        let todayRow = resolveToday(days: days, logicalKey: logicalKey, localKey: localKey)
+        if todayRow?.recovery != nil { return todayRow }
+        let carriedKey = todayRow?.day ?? logicalKey
+        return days.last(where: { $0.recovery != nil && $0.day < carriedKey })
+    }
+
+    /// Live-clock convenience over the pure `widgetAnchor`: resolves the anchor for `now` (defaults to the
+    /// current instant) so every surface's call site reads as one line and can never partially re-derive
+    /// the keys and drift. Inherits `Repository`'s MainActor isolation (like the `today` computed var)
+    /// because it reads the MainActor-isolated `logicalDayKey` / `localDayKey`; every caller (the widget
+    /// publish, the watch snapshot build, the Live Activity onReceive closures) already runs on the
+    /// MainActor. Tests call the pure 3-arg overload above instead.
+    static func widgetAnchor(days: [DailyMetric], now: Date = Date()) -> DailyMetric? {
+        widgetAnchor(days: days, logicalKey: logicalDayKey(now), localKey: localDayKey(now))
+    }
     /// The trailing 7 CALENDAR days ending today (for the week strip), oldest→newest , not the last 7
     /// stored rows, which on a stale import were old data. ISO yyyy-MM-dd compares chronologically.
     var week: [DailyMetric] {

@@ -74,9 +74,16 @@ final class WatchSessionBridge: NSObject, ObservableObject {
     /// Build the snapshot off the app state. Pure read; no side effects. Split out so the wiring is easy
     /// to follow and the calibrating logic sits in one place.
     static func buildSnapshot(from model: AppModel) async -> WatchScoreSnapshot {
-        // Anchor on the most recent day that actually carries a recovery score (the same row the widget
-        // and the Live Activity anchor on), so every field describes one coherent day.
-        let day = model.repo.days.last(where: { $0.recovery != nil })
+        // #911: anchor the way Today does, through the SHARED `Repository.widgetAnchor` the Home/Lock
+        // widget and the iOS Live Activity now also use, so the wrist, the widget, the Live Activity and
+        // Today always describe the same day. `Date()` is read here so the day rolls live as the phone
+        // republishes; the helper folds in the #304 pre-04:00 carve-out and the #547 future-day guard, and
+        // anchors on today's row (not "the most recent day with any recovery score") so it can't drift
+        // around the rollover. When today isn't scored yet it carries over the last STRICTLY-PRIOR scored
+        // day for the recovery side.
+        let days = model.repo.days
+        let now = Date()
+        let day = Repository.widgetAnchor(days: days, now: now)
 
         // Rest (sleep_performance) for that same anchor day. exploreSeries merges imported + on-device,
         // exactly like the Today Rest tile and the widget. The tail fallback (restSeries.last) is ONLY
@@ -89,7 +96,7 @@ final class WatchSessionBridge: NSObject, ObservableObject {
         if let day {
             let restSeries = await model.repo.exploreSeries(key: "sleep_performance", source: model.deviceId)
             let restByDay = Dictionary(restSeries.map { ($0.day, $0.value) }, uniquingKeysWith: { _, last in last })
-            let anchorIsToday = day.day == Repository.localDayKey(Date())
+            let anchorIsToday = day.day == Repository.localDayKey(now)
             restScore = restByDay[day.day] ?? (anchorIsToday ? restSeries.last?.value : nil)
         }
 
