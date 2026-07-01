@@ -127,6 +127,19 @@ public enum BatteryEstimator {
             break
         }
 
+        // 1b. #919: with no near-full (>=90%) charge to anchor on - common on a 12-day WHOOP 5.0 that rarely
+        //     tops past 90% between charges - anchor at the buffer's HIGHEST SoC (the top of the most recent
+        //     discharge) rather than the oldest reading, which can sit below a later charge and net to a
+        //     NON-discharge window (drop < 0 -> stuck on `rated`). The max is >= every later reading, so the
+        //     window can only discharge; the >=minDropPct gate still rejects a flat run. Preserves #8: its
+        //     buffer starts at the max, so this stays index 0 there. Last occurrence of the max (>=), for
+        //     parity with the Kotlin twin.
+        if startIdx == 0 {
+            var maxIdx = 0
+            for i in sorted.indices where sorted[i].soc >= sorted[maxIdx].soc { maxIdx = i }
+            startIdx = maxIdx
+        }
+
         // 2. End before the most recent PARTIAL top-up after the start anchor (a rise > chargeStepPct that
         //    does NOT reach near-full), so the fit prefers the longer pre-top-up discharge segment.
         var endIdx = sorted.count - 1

@@ -53,6 +53,18 @@ class BatteryEstimatorTest {
         assertEquals(53.0, e.remainingHours, 1e-6)   // 53 / (1 %/h), pre-top-up slope
     }
 
+    @Test fun measuredFromRecentDischargeWithoutNearFullCharge() {
+        // #919: a WHOOP 5.0 that never tops past 90% - SoC rises 16->52, then discharges 52->44 over 8h. The
+        // old scan found no near-full anchor and fell back to the OLDEST (16%) reading, so the window netted
+        // to a CHARGE (drop<0) and the estimate stayed on rated. Anchoring at the buffer's max (52%) fits the
+        // real 1 %/h discharge -> measured, 44h. (Distinct from #8, whose buffer already starts at its max.)
+        val r = listOf(0L to 16.0, 4 * h to 52.0, 12 * h to 44.0)
+        val e = BatteryEstimator.estimate(r, BatteryEstimator.ratedLifeHoursWhoop5)!!
+        assertEquals(BatteryEstimator.Source.MEASURED, e.source)
+        assertEquals(44.0, e.currentSoc, 1e-6)
+        assertEquals(44.0, e.remainingHours, 1e-6)   // 52->44 = 8pp over 8h = 1 %/h; 44 / 1
+    }
+
     @Test fun nearFullChargeStillResetsTheRun() {
         // The guard must NOT change a genuine near-full charge: discharge 100->20, charge back to 95 (>=90,
         // near-full), then 95->85 over 5h is 2 %/h. The run still resets on the near-full charge, source

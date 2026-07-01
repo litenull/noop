@@ -51,6 +51,19 @@ final class BatteryEstimatorTests: XCTestCase {
         XCTAssertEqual(e.remainingHours, 53, accuracy: 1e-6)   // 53 / (1 %/h), pre-top-up slope
     }
 
+    func testMeasuredFromRecentDischargeWithoutNearFullCharge() {
+        // #919: a WHOOP 5.0 that never tops past 90% - SoC rises 16->52, then discharges 52->44 over 8h. The
+        // old scan found no near-full anchor and fell back to the OLDEST (16%) reading, so the window netted
+        // to a CHARGE (drop<0) and the estimate stayed on rated. Anchoring at the buffer's max (52%) fits the
+        // real 1 %/h discharge -> measured, 44h. (Distinct from #8, whose buffer already starts at its max.)
+        let e = BatteryEstimator.estimate(
+            samples: [(0, 16), (4 * h, 52), (12 * h, 44)],
+            ratedHours: BatteryEstimator.ratedLifeHoursWhoop5)!
+        XCTAssertEqual(e.source, .measured)
+        XCTAssertEqual(e.currentSoc, 44, accuracy: 1e-6)
+        XCTAssertEqual(e.remainingHours, 44, accuracy: 1e-6)   // 52->44 = 8pp over 8h = 1 %/h; 44 / 1
+    }
+
     func testNearFullChargeStillResetsTheRun() {
         // The guard must NOT change a genuine near-full charge: discharge 100->20, charge back to 95 (>=90,
         // near-full), then 95->85 over 5h is 2 %/h. The run still resets on the near-full charge, source
