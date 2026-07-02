@@ -4328,6 +4328,10 @@ private fun OverviewHRChart(
         val f = if (t1 > t0) (ts - t0).toFloat() / (t1 - t0).toFloat() else 0f
         return lo + f
     }
+    fun xFor(ts: Long): Float? {
+        val fi = fracIndexFor(ts) ?: return null
+        return if (n > 1) plotW * fi / (n - 1) else null
+    }
     // Strict variant for POINT markers (charge pill, peak, effort-now rule): null when the time
     // falls outside the RENDERED buckets, so a zoomed window hides out-of-window marks exactly like
     // iOS clips them, instead of pinning them to the window edge. The sleep BAND keeps the clamping
@@ -4336,10 +4340,6 @@ private fun OverviewHRChart(
         if (n < 2) return null
         if (ts < buckets.first().bucket || ts > buckets.last().bucket) return null
         return xFor(ts)
-    }
-    fun xFor(ts: Long): Float? {
-        val fi = fracIndexFor(ts) ?: return null
-        return if (n > 1) plotW * fi / (n - 1) else null
     }
     fun yForBpm(v: Double): Float {
         val usableH = (plotH - topPad - bottomPad).coerceAtLeast(1f)
