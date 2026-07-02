@@ -2069,6 +2069,11 @@ struct TodayView: View {
         case .hydration:
             pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
                           value: dashboardValue(card)) { HydrationView() }
+        case .coupled:
+            // The Coupled view row (#43) carries NO metric value, it is a tap-through to the full
+            // coupled day screen. An empty value renders just the icon + title + subtitle + chevron.
+            pinnedCardRow(icon: card.icon, tint: tint, title: card.title, subtitle: card.subtitle,
+                          value: dashboardValue(card)) { CoupledView() }
         }
     }
 
@@ -2088,6 +2093,7 @@ struct TodayView: View {
         case .steps:       return StrandPalette.metricCyan
         case .calories:    return StrandPalette.metricAmber
         case .hydration:   return StrandPalette.metricCyan
+        case .coupled:     return StrandPalette.chargeColor
         }
     }
 
@@ -2151,6 +2157,10 @@ struct TodayView: View {
             // value (a fresh day reads "0.0 / 3.2 L"); the goal is always derivable from the profile.
             guard let goal = hydrationGoalML else { return "—" }
             return HydrationGoal.cardValueString(totalML: hydrationTotalML ?? 0, goalML: goal)
+        case .coupled:
+            // A tap-through row with no metric value of its own, the row shows just the chevron. Returning
+            // an empty string (not "—") renders no number and leaves it un-dimmed (it isn't a missing value).
+            return ""
         }
     }
 

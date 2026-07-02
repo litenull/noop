@@ -213,6 +213,9 @@ fun TodayScreen(
     onOpenStress: () -> Unit = {},
     onOpenHealth: () -> Unit = {},
     onOpenSleep: () -> Unit = {},
+    // Optional Coupled view card (task #43): a tap-through to the WHOOP-style day screen. Defaulted to a
+    // no-op so the call site stays compiling; AppRoot binds it to nav.navigate(CoupledView).
+    onOpenCoupled: () -> Unit = {},
     // The "workout in progress" indicator card routes to Live and re-opens the in-exercise overlay. Defaulted
     // to a no-op so the call site stays compiling; AppRoot binds it to openActiveWorkout() + nav.navigate(Live).
     onOpenActiveWorkout: () -> Unit = {},
@@ -1088,6 +1091,7 @@ fun TodayScreen(
                 onOpenStress = onOpenStress,
                 onOpenHealth = onOpenHealth,
                 onOpenSleep = onOpenSleep,
+                onOpenCoupled = onOpenCoupled,
                 onCustomise = { showDashboardEditor = true },
             )
         }
@@ -2480,6 +2484,7 @@ private fun YourCardsSection(
     onOpenStress: () -> Unit,
     onOpenHealth: () -> Unit,
     onOpenSleep: () -> Unit,
+    onOpenCoupled: () -> Unit,
     onCustomise: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxWidth().staggeredAppear(2)) {
@@ -2532,6 +2537,7 @@ private fun YourCardsSection(
                         onOpenHealth = onOpenHealth,
                         onOpenSleep = onOpenSleep,
                         onOpenHydration = onOpenHydration,
+                        onOpenCoupled = onOpenCoupled,
                     ),
                 )
             }
@@ -2549,10 +2555,13 @@ private fun dashboardCardDestination(
     onOpenHealth: () -> Unit,
     onOpenSleep: () -> Unit,
     onOpenHydration: () -> Unit,
+    onOpenCoupled: () -> Unit,
 ): () -> Unit = when (card) {
     DashboardCard.STRESS -> onOpenStress
     DashboardCard.SLEEP -> onOpenSleep
     DashboardCard.HYDRATION -> onOpenHydration
+    // The Coupled view card (#43) taps through to the full WHOOP-style day screen.
+    DashboardCard.COUPLED -> onOpenCoupled
     // Fitness age / Vitality + every overnight vital + steps/calories share the Health detail surface.
     DashboardCard.FITNESS_AGE, DashboardCard.VITALITY, DashboardCard.HRV, DashboardCard.RESTING_HR,
     DashboardCard.RESPIRATORY, DashboardCard.BLOOD_OXYGEN, DashboardCard.SKIN_TEMP,
@@ -2575,6 +2584,7 @@ private fun dashboardCardTint(card: DashboardCard): Color = when (card) {
     DashboardCard.STEPS -> Palette.metricCyan
     DashboardCard.CALORIES -> Palette.metricAmber
     DashboardCard.HYDRATION -> Palette.metricCyan
+    DashboardCard.COUPLED -> Palette.chargeColor
 }
 
 /**
@@ -2646,6 +2656,10 @@ private fun dashboardCardValue(
                 Locale.US, "%.1f / %.1f L",
                 hydrationTotalMl / 1000.0, hydrationGoalMl / 1000.0,
             )
+        DashboardCard.COUPLED ->
+            // A tap-through row with no metric value of its own, the row shows just the chevron. An empty
+            // string (not NO_DATA) renders no number and leaves it un-dimmed. Mirrors iOS dashboardValue.
+            ""
     }
 }
 
@@ -2893,9 +2907,11 @@ private data class EditableDashboardCard(val card: DashboardCard, val enabled: B
  * Contributors bars and (S4) the folded Readiness card. Built only when shown (the caller gates on
  * showChargeBreakdown), so the heavy rows materialise on tap (#819). Nothing is recomputed here, it reuses
  * the existing sections, which read the SAME carried/today row the ring shows. Mirrors iOS chargeBreakdownSheet.
+ * `internal` (not private) so the Coupled view's hero ring (task #43) opens THIS same sheet, one breakdown,
+ * never a duplicate.
  */
 @Composable
-private fun ChargeBreakdownSheet(
+internal fun ChargeBreakdownSheet(
     days: List<DailyMetric>,
     displayDay: DailyMetric?,
     carriedDay: DailyMetric?,

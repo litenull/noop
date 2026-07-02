@@ -762,7 +762,7 @@ final class Repository: ObservableObject {
             let offsetSec = TimeZone.current.secondsFromGMT(for: Date(timeIntervalSince1970: TimeInterval(s.endTs)))
             return AnalyticsEngine.dayString(s.endTs, offsetSec: offsetSec)
         }
-        // #715 — preserve EVERY session (a day with a main night + a nap must keep both); imported still
+        // #715, preserve EVERY session (a day with a main night + a nap must keep both); imported still
         // wins per end-day. Shared, unit-tested grouping (WhoopStore.SleepMerge / SleepMergeTests) replaces
         // the old per-day dictionary that silently dropped a second same-day session.
         return SleepMerge.merge(imported: imported, computed: computed, endDay: endDay)
@@ -1673,6 +1673,17 @@ final class Repository: ObservableObject {
                           uniquingKeysWith: { _, last in last })
     }
 
+    /// One day's native numeric values (question → value) for the logging card's numeric fields.
+    /// Only rows that carry a numericValue appear; a plain yes/no answer is absent.
+    func nativeJournalNumeric(day: String) async -> [String: Double] {
+        guard let store = await ensureStore() else { return [:] }
+        let rows = (try? await store.journalEntries(deviceId: Self.journalDeviceId,
+                                                    from: day, to: day)) ?? []
+        var out: [String: Double] = [:]
+        for r in rows { if let v = r.numericValue { out[r.question] = v } }
+        return out
+    }
+
     /// Union; the NATIVE row wins per (day, question) , the in-app answer is the user's most recent
     /// explicit action and stays editable, unlike the immutable imported history.
     nonisolated static func mergeJournal(imported: [JournalEntry], native: [JournalEntry]) -> [JournalEntry] {
@@ -1688,6 +1699,31 @@ final class Repository: ObservableObject {
         _ = try? await store.upsertJournal(
             [JournalEntry(day: day, question: question, answeredYes: answeredYes, notes: notes)],
             deviceId: Self.journalDeviceId)
+    }
+
+    /// Write one native NUMERIC answer (#322): stores the value AND answeredYes=true, so the existing
+    /// BehaviorInsights with/without split treats a numeric log as "behaviour occurred" unchanged,
+    /// while the value is carried for dose-response. Day per the importer's wake-day convention.
+    func saveJournalNumeric(day: String, question: String, value: Double, notes: String? = nil) async {
+        guard let store = await ensureStore() else { return }
+        _ = try? await store.upsertJournal(
+            [JournalEntry(day: day, question: question, answeredYes: true, notes: notes,
+                          numericValue: value)],
+            deviceId: Self.journalDeviceId)
+    }
+
+    /// Per-question numeric series (question → [day: value]) over the imported ∪ native union, native
+    /// winning per (day, question). Only rows that carry a numericValue contribute, so a numeric
+    /// journal item ("caffeine mg", "alcohol units") becomes a daily series the effect ranker can
+    /// consume the same way it consumes any metric series. Behaviours logged only as yes/no never
+    /// appear here (nil numericValue), so this is additive and never perturbs the boolean effects.
+    func numericJournalSeries() async -> [String: [String: Double]] {
+        let entries = await journalEntries()
+        var out: [String: [String: Double]] = [:]
+        for e in entries {
+            if let v = e.numericValue { out[e.question, default: [:]][e.day] = v }
+        }
+        return out
     }
 
     /// Clear one native answer (never touches imported rows , scoped to the dedicated source id).
@@ -1920,6 +1956,70 @@ final class Repository: ObservableObject {
         guard let store = await ensureStore() else { return }
         _ = try? await store.deleteWorkouts(deviceId: deviceId, sport: row.sport,
                                             from: row.startTs, to: row.startTs)
+    }
+
+    /// #64: merge two-or-more overlapping / adjacent MANUAL or DETECTED sessions into ONE manual session
+    /// (`merged`, built by the pure `WorkoutMerge.merge`), then retire the originals. Imported history is
+    /// NEVER passed here (the caller gates on `WorkoutMerge.canMerge`, and this only writes the manual-row
+    /// path), so the imported-read-only invariant holds. Sequence:
+    ///   1. re-key at most one GPS route onto the merged natural key (the longest, matching #10), dropping
+    ///      the others so no route is orphaned;
+    ///   2. save the merged row under the strap id (the manual path);
+    ///   3. per original: a DETECTED bout is durably dismissed (so a re-detect can't resurrect it), a
+    ///      MANUAL row is deleted by natural key, BUT never touch a source that equals the merged row's
+    ///      own natural key (a detected original that shares the merged start/sport would otherwise dismiss
+    ///      a span the merged row now occupies).
+    /// The caller runs `analyzeRecent` (rescores the merged row's strain from the strap HR, the #598
+    /// pattern) + reloads afterwards.
+    func mergeWorkouts(_ rows: [WorkoutRow], into merged: WorkoutRow) async {
+        guard rows.count >= 2 else { return }
+        // Pick the richest route to carry onto the merged key BEFORE deleting the originals (the DB write
+        // below doesn't drop routes, so we read + move them explicitly). Keep the longest polyline.
+        var bestRoute: (route: WorkoutRoute, startTs: Int, sport: String)?
+        for r in rows {
+            guard let route = RouteStore.load(startTs: r.startTs, sport: r.sport) else { continue }
+            if bestRoute == nil || route.polyline.count > bestRoute!.route.polyline.count {
+                bestRoute = (route, r.startTs, r.sport)
+            }
+        }
+
+        // Save the merged manual row.
+        await saveManualWorkout(merged)
+
+        // Retire each original. Skip any row whose natural key matches the merged row's, so we never
+        // dismiss/delete the span the merged row now owns.
+        for r in rows where !(r.startTs == merged.startTs && r.sport == merged.sport) {
+            switch WorkoutSource.classify(r.source) {
+            case .detected: await dismissDetected(r)
+            case .manual:   await deleteWorkout(r)
+            case .whoop, .apple, .lifting, .activityFile:
+                // Defensive: canMerge already excludes imported rows; never rewrite imported history.
+                continue
+            }
+            // Drop each original's route unless it's the one we're re-keeping onto the merged key.
+            if !(bestRoute?.startTs == r.startTs && bestRoute?.sport == r.sport) {
+                RouteStore.remove(startTs: r.startTs, sport: r.sport)
+            }
+        }
+
+        // Move the kept route onto the merged natural key, then drop it from the old key.
+        if let best = bestRoute, !(best.startTs == merged.startTs && best.sport == merged.sport) {
+            RouteStore.store(best.route, startTs: merged.startTs, sport: merged.sport)
+            RouteStore.remove(startTs: best.startTs, sport: best.sport)
+        }
+    }
+
+    /// #64: bulk-delete the selected sessions, routing per class exactly like the single-row path
+    /// (detected → durable dismiss, manual → delete). Imported rows are never selectable, so never reach
+    /// here. The caller reloads afterwards.
+    func bulkDeleteWorkouts(_ rows: [WorkoutRow]) async {
+        for r in rows {
+            switch WorkoutSource.classify(r.source) {
+            case .detected: await dismissDetected(r)
+            case .manual:   await deleteWorkout(r)
+            case .whoop, .apple, .lifting, .activityFile: continue
+            }
+        }
     }
 
     // MARK: - Auto-detect workouts (opt-in MVP) , the "Looks like a workout?" Today prompt

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.HealthAndSafety
+import androidx.compose.material.icons.filled.Hexagon
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -114,6 +115,9 @@ private enum class Destination(
     // Group: Today
     Today("today", "Today", Icons.Filled.Home),
     Intelligence("intelligence", "Intelligence", Icons.Filled.Psychology),
+    // Optional, default-OFF (task #43): the Coupled view (WHOOP-style day read). Reached ONLY via the
+    // Today dashboard "Coupled view" card tap-through, so it is deliberately NOT in any [DrawerGroup].
+    CoupledView("coupled_view", "Coupled view", Icons.Filled.Hexagon),
 
     // Group: Live
     Live("live", "Live", Icons.Filled.FavoriteBorder),
@@ -312,6 +316,8 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                         onOpenStress = { nav.navigate(Destination.Stress.route) },
                         onOpenHealth = { nav.navigate(Destination.Health.route) },
                         onOpenSleep = { nav.navigateTopLevel(Destination.Sleep.route) },
+                        // Optional Coupled view card (task #43): a normal push so back returns to Today.
+                        onOpenCoupled = { nav.navigate(Destination.CoupledView.route) },
                         // The "workout in progress" indicator: raise the one-shot the Live screen consumes to
                         // re-open the in-exercise overlay, then route to Live. One tap from Today (iOS parity).
                         onOpenActiveWorkout = {
@@ -330,6 +336,13 @@ fun AppRoot(viewModel: AppViewModel = viewModel()) {
                     SleepScreen(
                         vm = viewModel,
                         onOpenJournal = { nav.navigateTopLevel(Destination.Insights.route) },
+                    )
+                }
+                composable(Destination.CoupledView.route) {
+                    CoupledScreen(
+                        vm = viewModel,
+                        // Tapping Sleep in the coupled read opens the full Sleep screen (iOS parity).
+                        onOpenSleep = { nav.navigateTopLevel(Destination.Sleep.route) },
                     )
                 }
                 composable(Destination.Intervals.route) { IntervalsScreen(viewModel) }

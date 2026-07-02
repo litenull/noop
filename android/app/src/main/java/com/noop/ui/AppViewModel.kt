@@ -1395,6 +1395,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * #64: merge the selected MANUAL / DETECTED sessions into one manual session, then reload. [sport] is
+     * passed only when every selected row is a bare detected bout and the user picked a label. No-op when
+     * the selection can't merge (fewer than two, or any imported row) — imported history is never touched.
+     */
+    fun mergeWorkouts(rows: List<WorkoutRow>, sport: String? = null) {
+        if (!WorkoutMerge.canMerge(rows)) return
+        val merged = WorkoutMerge.merge(rows, sport = sport, strapDeviceId = deviceId) ?: return
+        viewModelScope.launch {
+            runCatching { repository.mergeWorkouts(rows, merged) }
+            // #598: rescore the merged row's strain from the strap's HR over its window now, so its Effort
+            // appears immediately instead of waiting for the next analyze tick.
+            rescoreAfterEdit()
+            loadWorkouts()
+        }
+    }
+
+    /** #64: bulk-delete the selected sessions (per-class routing), then reload. Imported rows are never
+     *  selectable, so a stray one is skipped by the repository. */
+    fun bulkDeleteWorkouts(rows: List<WorkoutRow>) {
+        viewModelScope.launch {
+            runCatching { repository.bulkDeleteWorkouts(rows) }
+            loadWorkouts()
+        }
+    }
+
+    /**
      * Drop the smoothing window and blank the hero number so a resume / re-attach shows "—" until a
      * genuinely fresh sample arrives, instead of republishing the stale pre-gap median. Called on
      * Live/Health screen entry (requestRealtimeHr 0->1), NOT on keep-alive re-arm, so steady-state

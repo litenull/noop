@@ -388,6 +388,19 @@ extension WhoopStore {
                 t.add(column: "activityClass", .integer)
             }
         }
+
+        // v20 (#322 / task #53 numeric journal): a journal entry can carry a NUMERIC value (e.g.
+        // "caffeine mg", "alcohol units") alongside the yes/no answer, not only a toggle. This ALTER adds
+        // a NULLABLE `numericValue REAL` to `journal`: additive only, no DEFAULT (a null means "this row is
+        // a plain yes/no answer with no numeric reading", which is every existing row + every imported WHOOP
+        // row, so history reads back unchanged). A numeric log writes answeredYes=1 AND numericValue=v, so
+        // the existing BehaviorInsights with/without split keeps working untouched; the value is carried for
+        // dose-response later. Twin of Android's MIGRATION_13_14.
+        migrator.registerMigration("v20-journal-numeric") { db in
+            try db.alter(table: "journal") { t in
+                t.add(column: "numericValue", .double)
+            }
+        }
         return migrator
     }
 }

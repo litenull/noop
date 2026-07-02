@@ -46,7 +46,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayOwnershipRow::class,
         LabMarkerRow::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 abstract class WhoopDatabase : RoomDatabase() {
@@ -346,6 +346,32 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v13 -> v14: ADDITIVE, adds `journal.numericValue` (#322 / task #53). A journal entry can carry a
+         * numeric value (caffeine mg, alcohol units) alongside the yes/no answer. A numeric log writes
+         * answeredYes=1 AND numericValue=v, so the EffectRanker with/without split keeps working unchanged;
+         * the value is carried for dose-response.
+         *
+         * ALTER ... ADD COLUMN only (no data touched): existing rows read back `numericValue = NULL`
+         * (a plain yes/no answer with no numeric reading), an absent value stays absent, never a fabricated
+         * 0. The SQL MUST match Room's generated column for a `Double?` field exactly: REAL, no NOT NULL, no
+         * SQL DEFAULT, the additive, nullable-safe form of MIGRATION_3_4. Twin of the Swift WhoopStore v20
+         * migration. No destructive fallback (see the class doc): a mismatch throws loudly rather than
+         * silently wiping non-resendable strap history.
+         *
+         * The SQL is exposed as [JOURNAL_NUMERIC_MIGRATION_SQL] so a plain-JVM unit test
+         * ([com.noop.data.JournalNumericMigrationTest]) can pin this shape without Robolectric.
+         */
+        internal val JOURNAL_NUMERIC_MIGRATION_SQL: List<String> = listOf(
+            "ALTER TABLE `journal` ADD COLUMN `numericValue` REAL",
+        )
+
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (stmt in JOURNAL_NUMERIC_MIGRATION_SQL) db.execSQL(stmt)
+            }
+        }
+
         private fun build(appContext: Context): WhoopDatabase =
             Room.databaseBuilder(appContext, WhoopDatabase::class.java, DB_NAME)
                 // Real additive migration, NO destructive fallback (see the class doc): with
@@ -354,7 +380,7 @@ abstract class WhoopDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
-                    MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
+                    MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
                 )
                 .build()
     }

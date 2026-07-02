@@ -357,6 +357,13 @@ data class JournalEntry(
     val question: String,
     val answeredYes: Boolean,
     val notes: String? = null,
+    /**
+     * Optional numeric reading for a numeric journal item (e.g. caffeine mg, alcohol units), #322.
+     * null for a plain yes/no answer and for every imported WHOOP row. A numeric log writes
+     * answeredYes=true AND numericValue=v, so the EffectRanker with/without split is unchanged.
+     * Swift twin: JournalEntry.numericValue (v20). Room maps `Double?` -> nullable REAL.
+     */
+    val numericValue: Double? = null,
 )
 
 /**

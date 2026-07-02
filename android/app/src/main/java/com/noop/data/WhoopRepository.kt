@@ -625,6 +625,48 @@ class WhoopRepository(private val dao: WhoopDao) {
         dao.deleteWorkoutByKey(row.deviceId, row.startTs, row.sport)
     }
 
+    /**
+     * #64: merge two-or-more overlapping / adjacent MANUAL or DETECTED sessions into ONE manual session
+     * ([merged], built by the pure [com.noop.ui.WorkoutMerge.merge]), then retire the originals. Imported
+     * history is NEVER passed here (the caller gates on WorkoutMerge.canMerge, and this only writes the
+     * manual-row path), so the imported-read-only invariant holds. The Android WorkoutRow carries its own
+     * routePolyline, so the route re-key is a field copy (no side-store): keep the longest original route.
+     * The caller runs rescoreAfterEdit (rescores strain from strap HR, the #598 pattern) + reloads.
+     */
+    suspend fun mergeWorkouts(originals: List<WorkoutRow>, merged: WorkoutRow) {
+        if (originals.size < 2) return
+        // Keep the longest original route on the merged row (mirrors macOS RouteStore re-key #10).
+        val keptRoute = originals.mapNotNull { it.routePolyline }.maxByOrNull { it.length }
+        val mergedWithRoute = if (keptRoute != null) merged.copy(routePolyline = keptRoute) else merged
+        saveManualWorkout(mergedWithRoute)
+        // Retire each original. Skip any row whose natural key matches the merged row's, so we never
+        // dismiss/delete the span the merged row now owns.
+        for (r in originals) {
+            if (r.startTs == merged.startTs && r.sport == merged.sport) continue
+            when {
+                r.source.lowercase().endsWith("-noop") -> dismissDetected(r)
+                r.source.lowercase() == "manual" -> dao.deleteWorkoutByKey(r.deviceId, r.startTs, r.sport)
+                // Defensive: canMerge already excludes imported rows; never rewrite imported history.
+                else -> continue
+            }
+        }
+    }
+
+    /**
+     * #64: bulk-delete the selected sessions, routing per class exactly like the single-row path
+     * (detected -> durable dismiss, manual -> delete). Imported rows are never selectable so never reach
+     * here. The caller reloads afterwards.
+     */
+    suspend fun bulkDeleteWorkouts(rows: List<WorkoutRow>) {
+        for (r in rows) {
+            when {
+                r.source.lowercase().endsWith("-noop") -> dismissDetected(r)
+                r.source.lowercase() == "manual" -> dao.deleteWorkoutByKey(r.deviceId, r.startTs, r.sport)
+                else -> continue
+            }
+        }
+    }
+
     suspend fun respSamples(deviceId: String, from: Long, to: Long, limit: Int = DEFAULT_LIMIT) =
         dao.respSamples(deviceId, from, to, limit)
 
