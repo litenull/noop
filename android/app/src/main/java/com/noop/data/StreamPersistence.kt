@@ -35,6 +35,7 @@ object StreamPersistence {
         // protocol carriers, so a missing column never causes a misread until a migration adds one.
         spo2 = streams.spo2.map { Spo2Row(it.ts.toLong(), it.red, it.ir) },
         skinTemp = streams.skinTemp.map { SkinTempRow(it.ts.toLong(), it.raw) },
+        sleepState = streams.sleepState.map { SleepStateRow(it.ts.toLong(), it.state) },
         // resp/gravity/steps/ppgHr remain type-47-only (historical offload), unchanged.
     )
 

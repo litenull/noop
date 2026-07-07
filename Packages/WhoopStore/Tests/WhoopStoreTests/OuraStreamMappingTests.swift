@@ -77,18 +77,24 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(s.skinTemp[0].ts, ts)
     }
 
-    // MARK: - Sleep phase -> events[OURA_SLEEP_PHASE]
+    // MARK: - Sleep phase -> events[OURA_SLEEP_PHASE] + sleepState
 
-    func testSleepPhaseMapsToEventWithPhaseCode() {
+    func testSleepPhaseMapsToEventAndSleepStateWithFiveMinuteEpochs() {
         let s = OuraStreamMapping.streams(from: [
             .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 0, stage: .deep)),
             .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 1, stage: .rem)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 2, stage: .awake)),
         ], at: ts)
-        XCTAssertEqual(s.events.count, 2)
+        XCTAssertEqual(s.events.count, 3)
         XCTAssertTrue(s.events.allSatisfy { $0.kind == OuraStreamMapping.sleepPhaseEventKind })
-        XCTAssertEqual(s.events.map { $0.payload["phase"] }, [.int(2), .int(3)])
-        XCTAssertEqual(s.events.map { $0.payload["index"] }, [.int(0), .int(1)])
-        XCTAssertEqual(s.events.map { $0.ts }, [ts, ts])
+        XCTAssertEqual(s.events.map { $0.payload["phase"] }, [.int(2), .int(3), .int(0)])
+        XCTAssertEqual(s.events.map { $0.payload["index"] }, [.int(0), .int(1), .int(2)])
+        XCTAssertEqual(s.events.map { $0.ts }, [ts, ts + 300, ts + 600])
+        XCTAssertEqual(s.sleepState, [
+            SleepStateSample(ts: ts, state: 2),
+            SleepStateSample(ts: ts + 300, state: 2),
+            SleepStateSample(ts: ts + 600, state: 0),
+        ])
     }
 
     // MARK: - Battery -> battery:[BatterySample]
@@ -152,8 +158,9 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(s.spo2.count, 1)
         XCTAssertEqual(s.skinTemp.count, 1)
         XCTAssertEqual(s.battery.count, 1)
-        // HRV + sleep-phase both ride the events stream.
+        // HRV + sleep-phase both ride the events stream; sleep-phase also feeds the sleep-state stream.
         XCTAssertEqual(s.events.count, 2)
+        XCTAssertEqual(s.sleepState, [SleepStateSample(ts: ts, state: 2)])
         // Streams never decoded by the Oura source stay empty (honest, never faked).
         XCTAssertTrue(s.resp.isEmpty)
         XCTAssertTrue(s.gravity.isEmpty)

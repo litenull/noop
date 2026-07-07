@@ -63,21 +63,27 @@ class OuraStreamMappingTest {
     }
 
     @Test
-    fun sleepPhaseBecomesOuraSleepPhaseEvent() {
+    fun sleepPhaseBecomesOuraSleepPhaseEventAndSleepState() {
         val s = OuraStreamMapping.streams(
             listOf(
                 OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 0, stage = OuraSleepStage.DEEP)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 3, index = 1, stage = OuraSleepStage.REM)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 1, stage = OuraSleepStage.REM)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 2, stage = OuraSleepStage.AWAKE)),
             ),
             anchor,
         )
-        assertEquals(2, s.events.size)
+        assertEquals(3, s.events.size)
         val deep = s.events[0]
         assertEquals(OuraStreamMapping.EVENT_SLEEP_PHASE, deep.kind)
         assertEquals("OURA_SLEEP_PHASE", deep.kind)
+        assertEquals(base + 2, deep.ts)
         assertEquals(2, deep.payload["phase"])           // OuraSleepStage.DEEP.raw == 2
         assertEquals(0, deep.payload["index"])
+        assertEquals(base + 2 + 300, s.events[1].ts)
         assertEquals(3, s.events[1].payload["phase"])     // REM.raw == 3
+        assertEquals(base + 2 + 600, s.events[2].ts)
+        assertEquals(listOf(2, 2, 0), s.sleepState.map { it.state })
+        assertEquals(listOf(base + 2, base + 2 + 300, base + 2 + 600), s.sleepState.map { it.ts })
         // PARITY: the payload is exactly { phase, index } - the Swift twin emits no phase_name, so neither
         // does Kotlin. Pin it so a re-added phase_name key breaks this test.
         assertNull(deep.payload["phase_name"])
@@ -156,5 +162,6 @@ class OuraStreamMappingTest {
         assertTrue(s.battery.isEmpty())
         assertTrue(s.spo2.isEmpty())
         assertTrue(s.skinTemp.isEmpty())
+        assertTrue(s.sleepState.isEmpty())
     }
 }

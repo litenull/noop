@@ -1,6 +1,8 @@
 package com.noop.data
 
 import com.noop.oura.OuraEvent
+import com.noop.oura.OuraSleepStage
+import com.noop.protocol.SleepStateSample
 import com.noop.protocol.SkinTempSample
 import com.noop.protocol.Spo2Sample
 import com.noop.protocol.Streams
@@ -36,6 +38,9 @@ object OuraStreamMapping {
 
     /** The event `kind` recorded for the ring's own open sleep-phase (0x49.../0x58) tags. */
     const val EVENT_SLEEP_PHASE = "OURA_SLEEP_PHASE"
+
+    /** Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0. */
+    const val SLEEP_PHASE_EPOCH_SECONDS = 5 * 60
 
     /**
      * Fold a batch of decoded [events] into a protocol [Streams] for one flush. [anchor] maps a
@@ -102,9 +107,10 @@ object OuraStreamMapping {
 
                 is OuraEvent.SleepPhaseEvent -> {
                     val ts = anchor(ev.value.ringTimestamp) ?: continue
+                    val sampleTs = ts + ev.value.index * SLEEP_PHASE_EPOCH_SECONDS
                     out.events.add(
                         WhoopEvent(
-                            ts = ts,
+                            ts = sampleTs,
                             kind = EVENT_SLEEP_PHASE,
                             payload = linkedMapOf<String, Any?>(
                                 "phase" to ev.value.stage.raw,
@@ -112,6 +118,7 @@ object OuraStreamMapping {
                             ),
                         ),
                     )
+                    out.sleepState.add(SleepStateSample(ts = sampleTs, state = sleepStateCode(ev.value.stage)))
                 }
 
                 is OuraEvent.Battery -> {
@@ -129,5 +136,11 @@ object OuraStreamMapping {
             }
         }
         return out
+    }
+
+    /** Bridge Oura's detailed phase enum onto the existing coarse sleep-state stream the sleep engine reads. */
+    private fun sleepStateCode(stage: OuraSleepStage): Int = when (stage) {
+        OuraSleepStage.AWAKE -> 0
+        OuraSleepStage.LIGHT, OuraSleepStage.DEEP, OuraSleepStage.REM -> 2
     }
 }

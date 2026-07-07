@@ -30,6 +30,8 @@ public enum OuraStreamMapping {
     public static let hrvEventKind = "OURA_HRV"
     /// WhoopEvent.kind for a decoded sleep-phase code (2-bit: awake/light/deep/rem).
     public static let sleepPhaseEventKind = "OURA_SLEEP_PHASE"
+    /// Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0.
+    public static let sleepPhaseEpochSeconds = 5 * 60
 
     /// Build a `Streams` from a batch of decoded Oura events, all stamped at the arrival wall-clock `ts`
     /// (unix seconds). Pure → unit-testable. Section-4 table:
@@ -39,6 +41,7 @@ public enum OuraStreamMapping {
     ///   - `.spo2`       (0x6F/0x70/0x77)              → `spo2:[SpO2Sample(raw_adc)]`
     ///   - `.temp`       (0x46/0x75)                    → `skinTemp:[SkinTempSample(raw_adc)]`
     ///   - `.sleepPhase` (0x4E/0x5A 2-bit codes)        → `events:[WhoopEvent(kind: OURA_SLEEP_PHASE)]`
+    ///                                                            + `sleepState:[SleepStateSample]`
     ///   - `.battery`                                   → `battery:[BatterySample]`
     /// Every other event case (`.motion`, `.state`, `.timeSync`, `.rtcBeacon`, `.debugText`, `.tierB`,
     /// `.activityInfo`) is intentionally not folded into a durable stream here. In particular the 0x50
@@ -90,10 +93,12 @@ public enum OuraStreamMapping {
                 out.skinTemp.append(SkinTempSample(ts: ts, raw: Int((v.celsius * 100).rounded()), unit: "centi_c"))
 
             case .sleepPhase(let v):
-                out.events.append(WhoopEvent(ts: ts, kind: sleepPhaseEventKind, payload: [
+                let sampleTs = ts + v.index * sleepPhaseEpochSeconds
+                out.events.append(WhoopEvent(ts: sampleTs, kind: sleepPhaseEventKind, payload: [
                     "phase": .int(v.stage.rawValue),
                     "index": .int(v.index),
                 ]))
+                out.sleepState.append(SleepStateSample(ts: sampleTs, state: sleepStateCode(for: v.stage)))
 
             case .battery(let v):
                 out.battery.append(BatterySample(
@@ -110,5 +115,13 @@ public enum OuraStreamMapping {
             }
         }
         return out
+    }
+
+    /// Bridge Oura's detailed phase enum onto the existing coarse sleep-state stream the sleep engine reads.
+    private static func sleepStateCode(for stage: OuraSleepStage) -> Int {
+        switch stage {
+        case .awake: return 0
+        case .light, .deep, .rem: return 2
+        }
     }
 }

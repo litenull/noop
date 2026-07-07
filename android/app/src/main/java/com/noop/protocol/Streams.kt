@@ -114,6 +114,9 @@ data class BatterySample(
     val charging: Boolean? = null,
 )
 
+/** The coarse sleep-state stream read by the sleep engine: 0 wake / 1 still / 2 asleep / 3 up. */
+data class SleepStateSample(val ts: Int, val state: Int)
+
 /** The bundle of decoded series extracted from a batch of parsed frames. */
 data class Streams(
     val hr: MutableList<HrSample> = mutableListOf(),
@@ -124,6 +127,7 @@ data class Streams(
     // unchanged; only a source that decodes these biometric signals live (the Oura ring) populates them.
     val spo2: MutableList<Spo2Sample> = mutableListOf(),
     val skinTemp: MutableList<SkinTempSample> = mutableListOf(),
+    val sleepState: MutableList<SleepStateSample> = mutableListOf(),
 ) {
     companion object {
         val EMPTY: Streams get() = Streams()

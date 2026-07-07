@@ -844,7 +844,7 @@ extension OuraLiveSource: @preconcurrency CBCentralManagerDelegate {
         reassembler.reset()
         // Resume the GetEvents cursor from where the LAST connection to this ring left off (s5.1/5.3), so
         // a routine reconnect doesn't re-fetch the ring's entire banked history every time.
-        historyCursor = OuraHistoryCursorStore.read(deviceId: deviceId)
+        historyCursor = OuraHistoryCursorStore.readForCurrentMapping(deviceId: deviceId)
         peripheral.discoverServices([Self.service])
     }
 
@@ -1102,12 +1102,29 @@ public enum OuraKeyStore {
 /// on every single connect. Unlike `OuraKeyStore` this is NOT sensitive - it's an opaque ring-clock tick
 /// counter, not a credential - so plain `UserDefaults` is the right (and simplest) store.
 enum OuraHistoryCursorStore {
+    /// Mapping revision 2 starts persisting decoded Oura sleep phases into `sleepStateSample`. Existing
+    /// installs may have already advanced the cursor while dropping those rows, so reset once per ring.
+    private static let mappingRevision = 2
     private static func key(deviceId: String) -> String { "com.noop.oura.historyCursor.\(deviceId)" }
+    private static func revisionKey(deviceId: String) -> String { "com.noop.oura.historyCursor.mappingRevision.\(deviceId)" }
 
     /// The persisted cursor for `deviceId`, or 0 (fetch everything) if none is stored yet.
     static func read(deviceId: String) -> UInt32 {
         let raw = UserDefaults.standard.object(forKey: key(deviceId: deviceId)) as? Int ?? 0
         return UInt32(clamping: raw)
+    }
+
+    /// Read the cursor for the current mapping revision. A mapping upgrade that fixes dropped rows may need
+    /// a one-time replay of the ring's still-banked history; after that, normal resume semantics apply.
+    static func readForCurrentMapping(deviceId: String) -> UInt32 {
+        let revKey = revisionKey(deviceId: deviceId)
+        let storedRevision = UserDefaults.standard.integer(forKey: revKey)
+        guard storedRevision >= mappingRevision else {
+            UserDefaults.standard.set(mappingRevision, forKey: revKey)
+            save(0, deviceId: deviceId)
+            return 0
+        }
+        return read(deviceId: deviceId)
     }
 
     /// Store the advanced cursor for `deviceId`.
