@@ -35,12 +35,12 @@ public struct WidgetSnapshot: Codable, Equatable {
     /// entitlement on both targets (which also reads `$(APP_GROUP_ID)`). If the entitlement is missing on
     /// either side, `UserDefaults(suiteName:)` returns nil and every consumer (PendingIntents,
     /// WidgetSnapshot.publish, Live Activity) silently no-ops — see `assertGroupProvisioned` for the
-    /// debug-time canary. The fallback is the canonical upstream group and only applies if the Info.plist
+    /// debug-time canary. The fallback is the canonical staging group and only applies if the Info.plist
     /// key is somehow absent (each process reads its OWN bundle, so the app and the widget extension
     /// each carry the key in their generated Info.plist).
     public static let suiteName: String = {
         Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
-            ?? "group.com.noopapp.noop"
+            ?? "group.com.noopapp.noop.staging"
     }()
     public static let storageKey = "noop.widget.snapshot"
 

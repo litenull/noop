@@ -21,8 +21,8 @@ import StrandDesign
 //
 // We read the app group directly here rather than depending on a loader symbol from the bridge
 // lane, so this extension only needs the shared `WatchScoreSnapshot` type from StrandDesign. The
-// suite + key match the cross-lane contract: the phone-side bridge writes the latest snapshot to
-// `group.com.noopapp.noop` under `latestWatchSnapshot`, and the watch app + this complication read
+// suite + key match the cross-lane contract: the phone-side bridge writes the latest snapshot to the
+// configured app group under `latestWatchSnapshot`, and the watch app + this complication read
 // it. The suite name is read from the extension's own Info.plist (AppGroupIdentifier) so it lives
 // in one place, with the canonical group as a fallback.
 
