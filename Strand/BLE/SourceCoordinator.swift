@@ -359,12 +359,23 @@ final class SourceCoordinator: ObservableObject {
             ringGen: ringGen,
             authKey: { OuraKeyStore.read(deviceId: id) },
             persist: { [storeHandle] streams in
-                Task { if let store = await storeHandle() { _ = try? await store.insert(streams, deviceId: id) } }
+                let hasSleepPhase = streams.events.contains { $0.kind == OuraStreamMapping.sleepPhaseEventKind }
+                Task {
+                    if let store = await storeHandle() {
+                        _ = try? await store.insert(streams, deviceId: id)
+                        if hasSleepPhase { _ = try? await store.materializeOuraSleepSessions(deviceId: id) }
+                    }
+                }
             },
             log: straplog,
             onBattery: { [live] pct in live.setBattery(Double(pct)) },
             adoptIntent: adoptIntent)
         if adoptIntent { straplog("Oura: adopt consent granted - this session may install NOOP's key") }
+        Task {
+            if let store = await storeHandle() {
+                _ = try? await store.materializeOuraSleepSessions(deviceId: id)
+            }
+        }
         if let pid = peripheralId(for: id), let uuid = UUID(uuidString: pid) {
             source.connect(uuid)
         } else {

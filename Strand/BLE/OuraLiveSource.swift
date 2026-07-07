@@ -1102,9 +1102,10 @@ public enum OuraKeyStore {
 /// on every single connect. Unlike `OuraKeyStore` this is NOT sensitive - it's an opaque ring-clock tick
 /// counter, not a credential - so plain `UserDefaults` is the right (and simplest) store.
 enum OuraHistoryCursorStore {
-    /// Mapping revision 2 starts persisting decoded Oura sleep phases into `sleepStateSample`. Existing
-    /// installs may have already advanced the cursor while dropping those rows, so reset once per ring.
-    private static let mappingRevision = 2
+    /// Mapping revision 3 starts materializing decoded Oura sleep phases into `sleepSession` rows.
+    /// Existing installs may have already advanced the cursor while dropping/missing those rows, so reset
+    /// once per ring.
+    private static let mappingRevision = 3
     private static func key(deviceId: String) -> String { "com.noop.oura.historyCursor.\(deviceId)" }
     private static func revisionKey(deviceId: String) -> String { "com.noop.oura.historyCursor.mappingRevision.\(deviceId)" }
 

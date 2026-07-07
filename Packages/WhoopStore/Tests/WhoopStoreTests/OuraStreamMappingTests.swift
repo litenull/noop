@@ -6,6 +6,13 @@ import OuraProtocol
 final class OuraStreamMappingTests: XCTestCase {
     private let ts = 1_750_000_000
 
+    private func sleepPhaseEvent(ts: Int, phase: Int, index: Int) -> WhoopEvent {
+        WhoopEvent(ts: ts, kind: OuraStreamMapping.sleepPhaseEventKind, payload: [
+            "phase": .int(phase),
+            "index": .int(index),
+        ])
+    }
+
     // MARK: - HR 0x55 -> hr:[HRSample]
 
     func testHRMapsToHRStreamStampedAtArrival() {
@@ -166,5 +173,66 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertTrue(s.gravity.isEmpty)
         XCTAssertTrue(s.steps.isEmpty)
         XCTAssertTrue(s.ppgHr.isEmpty)
+    }
+
+    func testOuraSleepPhaseEventsMaterializeSleepSessionRows() async throws {
+        let store = try await WhoopStore.inMemory()
+        _ = try await store.insert(Streams(events: [
+            sleepPhaseEvent(ts: ts, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 600, phase: 2, index: 2),
+            sleepPhaseEvent(ts: ts + 900, phase: 3, index: 3),
+        ]), deviceId: "oura-ring")
+
+        let changed = try await store.materializeOuraSleepSessions(deviceId: "oura-ring")
+        XCTAssertEqual(changed, 1)
+
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].startTs, ts)
+        XCTAssertEqual(sessions[0].endTs, ts + 1_200)
+        XCTAssertEqual(sessions[0].efficiency ?? 0, 75, accuracy: 0.001)
+
+        let data = try XCTUnwrap(sessions[0].stagesJSON?.data(using: .utf8))
+        let segments = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        XCTAssertEqual(segments.count, 4)
+        XCTAssertEqual(segments.map { $0["stage"] as? String }, ["wake", "light", "deep", "rem"])
+    }
+
+    func testOuraSleepMaterializerSplitsGapsAndIsIdempotent() async throws {
+        let store = try await WhoopStore.inMemory()
+        _ = try await store.insert(Streams(events: [
+            sleepPhaseEvent(ts: ts, phase: 1, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 600, phase: 2, index: 2),
+            sleepPhaseEvent(ts: ts + 900, phase: 2, index: 3),
+            sleepPhaseEvent(ts: ts + 10_000, phase: 1, index: 0),
+            sleepPhaseEvent(ts: ts + 10_300, phase: 3, index: 1),
+            sleepPhaseEvent(ts: ts + 10_600, phase: 3, index: 2),
+            sleepPhaseEvent(ts: ts + 10_900, phase: 0, index: 3),
+        ]), deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 2)
+        _ = try await store.materializeOuraSleepSessions(deviceId: "oura-ring")
+
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.map(\.startTs), [ts, ts + 10_000])
+        XCTAssertEqual(sessions.map(\.endTs), [ts + 1_200, ts + 11_200])
+    }
+
+    func testOuraSleepMaterializerIgnoresShortOrAwakeOnlySequences() async throws {
+        let store = try await WhoopStore.inMemory()
+        _ = try await store.insert(Streams(events: [
+            sleepPhaseEvent(ts: ts, phase: 1, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 10_000, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 10_300, phase: 0, index: 1),
+            sleepPhaseEvent(ts: ts + 10_600, phase: 0, index: 2),
+            sleepPhaseEvent(ts: ts + 10_900, phase: 0, index: 3),
+        ]), deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 0)
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertTrue(sessions.isEmpty)
     }
 }
