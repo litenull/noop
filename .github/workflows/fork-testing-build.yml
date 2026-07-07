@@ -45,7 +45,7 @@ jobs:
           - **Android (release)** — \`NOOP-android-v${VER}.apk\` — optimized, non-debuggable build; installs beside the official app. \`com.noop.whoop.staging\`.
           - **Android (debug)** — \`NOOP-android-debug-v${VER}.apk\` — debuggable build. \`com.noop.whoop.debug\`.
           - **macOS** — \`NOOP-macos-v${VER}.zip\` — unzip, then **right-click → Open** (unsigned; Gatekeeper warns once).
-          - **iOS** — \`NOOP-ios-unsigned-v${VER}.ipa\` — sideload via **AltStore / Sideloadly** (re-signs on-device); embedded watch app stripped.
+          - **iOS** — \`NOOP-ios-unsigned-v${VER}.ipa\` — sideload via **AltStore / Sideloadly** (re-signs on-device); embedded watch/widgets stripped.
 
           Base app version ${VER} · built ${DATE} · \`${SHA}\`."
 
@@ -125,7 +125,7 @@ jobs:
           -derivedDataPath build/dd
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
           build
-      - name: Package unsigned .ipa (strip the embedded watch app) + attach
+      - name: Package unsigned .ipa (strip embedded extensions) + attach
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ needs.meta.outputs.ver }}
@@ -133,6 +133,7 @@ jobs:
           APP=$(find build/dd/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)
           test -n "$APP" || { echo ".app (iphoneos) not found"; exit 1; }
           rm -rf "$APP/Watch"
+          rm -rf "$APP/PlugIns"
           rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
           zip -qr "NOOP-ios-unsigned-v${VER}.ipa" Payload
           gh release upload "${{ needs.meta.outputs.tag }}" "NOOP-ios-unsigned-v${VER}.ipa" --repo "$GITHUB_REPOSITORY" --clobber
