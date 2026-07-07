@@ -28,7 +28,6 @@ struct LiquidTodayView: View {
     // async-loaded via the confirmed Repository accessors
     @State private var restScore: Double?          // sleep_performance, day-keyed
     @State private var stress: Double?             // StressModel(...).score, 0–3
-    @State private var stressLive: Double?         // today's intraday DaytimeStress average, 0–3
     @State private var stressHistorical: Double?   // latest stored stress history point, 0–3
     @State private var fitnessAge: Double?         // exploreSeries("fitness_age").last
     @State private var vitality: Double?           // exploreSeries("vitality").last
@@ -502,8 +501,7 @@ struct LiquidTodayView: View {
     private func liquidCard(for card: DashboardCard) -> some View {
         switch card {
         case .stress:
-            cardLink(dest: StressView(), title: card.title, sub: card.subtitle,
-                     value: stressText, tint: StrandPalette.accent, frac: fracOver(stressPrimary, 3))
+            stressCardLink(title: card.title, sub: card.subtitle, tint: StrandPalette.accent)
         case .fitnessAge:
             cardLink(dest: metricDetail("fitness_age"), title: card.title, sub: card.subtitle,
                      value: unitText(fitnessAge, card.unit), tint: StrandPalette.chargeColor, frac: 0.5)
@@ -574,6 +572,40 @@ struct LiquidTodayView: View {
                 Text(value).font(StrandFont.number(17)).foregroundStyle(StrandPalette.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(StrandPalette.surfaceRaised)
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(StrandPalette.hairline, lineWidth: 1))
+                    .opacity(cardOpacity)
+            )
+        }
+        .buttonStyle(LiquidPressStyle())
+    }
+
+    private func stressCardLink(title: String, sub: String, tint: Color) -> some View {
+        NavigationLink { StressView() } label: {
+            HStack(spacing: 12) {
+                LiquidVessel(value: fracOver(stressPrimary, 3), tint: tint, animated: false).frame(width: 30, height: 30)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title.uppercased()).font(StrandFont.overlineScaled(11)).tracking(1.0)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Text(sub).font(StrandFont.caption).foregroundStyle(StrandPalette.textTertiary)
+                }
+                Spacer(minLength: 8)
+                DashboardStressValueText(
+                    days: repo.days,
+                    historical: stressHistorical,
+                    daily: stress,
+                    font: StrandFont.number(17),
+                    primaryColor: StrandPalette.textPrimary,
+                    placeholderColor: StrandPalette.textTertiary
+                )
                 Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(StrandPalette.textTertiary)
             }
@@ -871,7 +903,6 @@ struct LiquidTodayView: View {
         }.value
         stress = stressValues.daily
         stressHistorical = stressValues.historical ?? DashboardStressSnapshot.latestHistorical(from: storedStress, model: nil)
-        stressLive = selectedDayOffset == 0 ? await loadLiveStressAverage(from: from, to: to) : nil
         fitnessAge = (await fitA).last?.value   // history-wide latest banked (not day-scoped)
         vitality = (await vitA).last?.value
         // Steps is a DAILY metric, so key it to the SELECTED day (like restScore above), not the history-wide
@@ -922,7 +953,7 @@ struct LiquidTodayView: View {
 
     private var stepCount: Double? { displayDay?.steps.map(Double.init) ?? stepsEst }
 
-    private var stressPrimary: Double? { stressLive ?? stress ?? stressHistorical }
+    private var stressPrimary: Double? { stress ?? stressHistorical }
 
     private var liveHour: Double {
         let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
@@ -939,22 +970,6 @@ struct LiquidTodayView: View {
         guard let v else { return "–" }
         let n = decimals > 0 ? String(format: "%.\(decimals)f", v) : String(Int(v.rounded()))
         return unit.isEmpty ? n : "\(n) \(unit)"
-    }
-
-    private var stressText: String {
-        DashboardStressSnapshot(live: stressLive, historical: stressHistorical, daily: stress)
-            .displayText()
-    }
-
-    private func loadLiveStressAverage(from: Int, to: Int) async -> Double? {
-        let hr = await repo.hrSamples(from: from, to: to, limit: 200_000)
-        guard hr.count >= DaytimeStress.minHourHRSamples else { return nil }
-        let rr = (try? await repo.storeHandle()?.rrIntervals(
-            deviceId: repo.deviceId, from: from, to: to, limit: 200_000)) ?? []
-        let tz = TimeZone.current.secondsFromGMT(for: Date())
-        return await Task.detached(priority: .utility) {
-            DaytimeStress.analyze(hr: hr, rr: rr, tzOffsetSeconds: tz).dayMean
-        }.value
     }
 
     private var sleepText: String {

@@ -681,6 +681,8 @@ struct DashboardStressSnapshot: Equatable {
 
     var primary: Double? { live ?? daily ?? historical }
 
+    var isEmpty: Bool { live == nil && daily == nil && historical == nil }
+
     func displayText(calibrating: String = String(localized: "Calibrating")) -> String {
         let liveText = live.map { "Live \(Self.valueText($0))" }
         let histText = historical.map { "Hist \(Self.valueText($0))" }
@@ -696,8 +698,69 @@ struct DashboardStressSnapshot: Equatable {
         return model?.fullTrend.dropLast().last?.value
     }
 
+    static func liveScore(heartRate: Int?, rrRecent: [Int], days: [DailyMetric]) -> Double? {
+        guard let heartRate, heartRate > 0 else { return nil }
+        let rmssd = HRVAnalyzer.analyze(
+            rawRR: rrRecent.suffix(60).map(Double.init),
+            maxRejectedFraction: HRVAnalyzer.defaultSpotMaxRejectedFraction
+        ).rmssd
+
+        let baseline = Array(days.dropLast().suffix(30))
+        let rhrBase = baseline.compactMap { $0.restingHr }.map(Double.init)
+        let hrvBase = baseline.compactMap { $0.avgHrv }
+        let meanRHR = StressMath.mean(rhrBase)
+        let meanHRV = StressMath.mean(hrvBase)
+
+        if meanRHR != nil || (meanHRV != nil && rmssd != nil) {
+            return StressMath.squash(StressMath.rawScore(
+                rhrToday: Double(heartRate), meanRHR: meanRHR,
+                sdRHR: StressMath.std(rhrBase, mean: meanRHR),
+                hrvToday: rmssd, meanHRV: meanHRV,
+                sdHRV: StressMath.std(hrvBase, mean: meanHRV)))
+        }
+
+        // Cold-start fallback: still move with the live stream before a personal baseline exists.
+        var raw = (Double(heartRate) - 70) / 18
+        if let rmssd { raw += (45 - rmssd) / 22 }
+        return StressMath.squash(raw)
+    }
+
     private static func valueText(_ value: Double) -> String {
         String(format: "%.1f", min(max(value, 0), 3))
+    }
+}
+
+struct DashboardStressValueText: View {
+    @EnvironmentObject private var live: LiveState
+
+    let days: [DailyMetric]
+    let historical: Double?
+    let daily: Double?
+    let font: Font
+    let primaryColor: Color
+    let placeholderColor: Color
+    var calibrating: String = String(localized: "Calibrating")
+
+    private var snapshot: DashboardStressSnapshot {
+        DashboardStressSnapshot(
+            live: (live.connected || live.streamingLiveHR) ? DashboardStressSnapshot.liveScore(
+                heartRate: live.heartRate,
+                rrRecent: live.rrRecent,
+                days: days) : nil,
+            historical: historical,
+            daily: daily
+        )
+    }
+
+    var body: some View {
+        let snapshot = snapshot
+        Text(snapshot.displayText(calibrating: calibrating))
+            .font(font)
+            .foregroundStyle(snapshot.isEmpty ? placeholderColor : primaryColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+            .contentTransition(.numericText())
+            .animation(.easeOut(duration: 0.2), value: snapshot.displayText(calibrating: calibrating))
     }
 }
 
