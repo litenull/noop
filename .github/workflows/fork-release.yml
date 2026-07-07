@@ -6,7 +6,7 @@
 # android/app/build.gradle.kts (versionName + versionCode) and project.yml (MARKETING_VERSION +
 # CURRENT_PROJECT_VERSION) — and commits that to the dispatched branch, so the built app actually
 # REPORTS the new version. Then it publishes a fixed, non-prerelease `v<VERSION>` release with the
-# version-stamped artifacts. releases/latest returns it, so UpdateCheck finds it (isNewer strips the
+# version-stamped iOS artifact. releases/latest returns it, so UpdateCheck finds it (isNewer strips the
 # `-staging` suffix, so an installed staging build compares clean).
 #
 # Contrast with fork-testing-build.yml: THAT publishes the rolling `testing-latest` PRERELEASE (a
@@ -137,71 +137,11 @@ jobs:
             fi
             {
               printf '\n---\n\n**Downloads** — NOOP Staging identity, installs **beside** the official app (separate data):\n'
-              printf -- '- **Android** — `NOOP-android-v%s.apk` (`com.noop.whoop.staging`)\n' "$NEW"
-              printf -- '- **macOS** — `NOOP-macos-v%s.zip` (unzip, then right-click → Open)\n' "$NEW"
               printf -- '- **iOS** — `NOOP-ios-unsigned-v%s.ipa` (AltStore / Sideloadly)\n' "$NEW"
             } >> "$BODY"
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$(git rev-parse HEAD)" \
               --title "NOOP ${NEW}" --notes-file "$BODY"
           fi
-
-  android:
-    needs: bump
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: android
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump.outputs.sha }}   # build the bumped commit
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/wrapper-validation@v4
-      - uses: gradle/actions/setup-gradle@v4
-      # Release-only (no debug APK). Signed with the committed fork-debug.keystore via the debug
-      # signingConfig storeFile (release falls back to it when no keystore.properties is present);
-      # -PstagingRelease gives it the .staging app id so it installs beside the official app.
-      - name: Build staging-release APK
-        run: ./gradlew assembleFullRelease -PstagingRelease
-      - name: Version the filename + attach
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VER: ${{ needs.bump.outputs.ver }}
-        run: |
-          cp app/build/outputs/apk/full/release/*.apk "NOOP-android-v${VER}.apk"
-          gh release upload "${{ needs.bump.outputs.tag }}" "NOOP-android-v${VER}.apk" \
-            --repo "$GITHUB_REPOSITORY" --clobber
-
-  macos:
-    needs: bump
-    runs-on: macos-15
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.bump.outputs.sha }}
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Generate Xcode project
-        run: xcodegen generate
-      - name: Build NOOP.app (macOS, unsigned)
-        run: >-
-          xcodebuild -scheme Strand -configuration Debug -destination 'platform=macOS'
-          -derivedDataPath build/dd
-          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
-          build
-      - name: Package + attach
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VER: ${{ needs.bump.outputs.ver }}
-        run: |
-          APP=$(find build/dd/Build/Products -maxdepth 3 -name '*.app' -type d | head -1)
-          test -n "$APP" || { echo ".app not found"; exit 1; }
-          ditto -c -k --keepParent "$APP" "NOOP-macos-v${VER}.zip"
-          gh release upload "${{ needs.bump.outputs.tag }}" "NOOP-macos-v${VER}.zip" --repo "$GITHUB_REPOSITORY" --clobber
 
   ios:
     needs: bump
