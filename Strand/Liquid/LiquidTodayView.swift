@@ -28,6 +28,8 @@ struct LiquidTodayView: View {
     // async-loaded via the confirmed Repository accessors
     @State private var restScore: Double?          // sleep_performance, day-keyed
     @State private var stress: Double?             // StressModel(...).score, 0–3
+    @State private var stressLive: Double?         // today's intraday DaytimeStress average, 0–3
+    @State private var stressHistorical: Double?   // latest stored stress history point, 0–3
     @State private var fitnessAge: Double?         // exploreSeries("fitness_age").last
     @State private var vitality: Double?           // exploreSeries("vitality").last
     @State private var stepsEst: Double?           // steps_est, day-keyed to the selected day (fallback)
@@ -501,7 +503,7 @@ struct LiquidTodayView: View {
         switch card {
         case .stress:
             cardLink(dest: StressView(), title: card.title, sub: card.subtitle,
-                     value: stressText, tint: StrandPalette.accent, frac: fracOver(stress, 3))
+                     value: stressText, tint: StrandPalette.accent, frac: fracOver(stressPrimary, 3))
         case .fitnessAge:
             cardLink(dest: metricDetail("fitness_age"), title: card.title, sub: card.subtitle,
                      value: unitText(fitnessAge, card.unit), tint: StrandPalette.chargeColor, frac: 0.5)
@@ -570,6 +572,8 @@ struct LiquidTodayView: View {
                 }
                 Spacer(minLength: 8)
                 Text(value).font(StrandFont.number(17)).foregroundStyle(StrandPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
                 Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(StrandPalette.textTertiary)
             }
@@ -860,9 +864,14 @@ struct LiquidTodayView: View {
         // history doesn't stutter the UI. Snapshot the inputs (value types) into the detached task.
         let storedStress = await stressA
         let daysSnapshot = repo.days
-        stress = await Task.detached(priority: .utility) {
-            StressModel(days: daysSnapshot, stored: storedStress)?.score
+        let stressValues = await Task.detached(priority: .utility) {
+            let model = StressModel(days: daysSnapshot, stored: storedStress)
+            return (daily: model?.score,
+                    historical: DashboardStressSnapshot.latestHistorical(from: storedStress, model: model))
         }.value
+        stress = stressValues.daily
+        stressHistorical = stressValues.historical ?? DashboardStressSnapshot.latestHistorical(from: storedStress, model: nil)
+        stressLive = selectedDayOffset == 0 ? await loadLiveStressAverage(from: from, to: to) : nil
         fitnessAge = (await fitA).last?.value   // history-wide latest banked (not day-scoped)
         vitality = (await vitA).last?.value
         // Steps is a DAILY metric, so key it to the SELECTED day (like restScore above), not the history-wide
@@ -913,6 +922,8 @@ struct LiquidTodayView: View {
 
     private var stepCount: Double? { displayDay?.steps.map(Double.init) ?? stepsEst }
 
+    private var stressPrimary: Double? { stressLive ?? stress ?? stressHistorical }
+
     private var liveHour: Double {
         let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
         return Double(c.hour ?? 0) + Double(c.minute ?? 0) / 60
@@ -930,7 +941,21 @@ struct LiquidTodayView: View {
         return unit.isEmpty ? n : "\(n) \(unit)"
     }
 
-    private var stressText: String { stress.map { String(Int($0.rounded())) } ?? "Calibrating" }
+    private var stressText: String {
+        DashboardStressSnapshot(live: stressLive, historical: stressHistorical, daily: stress)
+            .displayText()
+    }
+
+    private func loadLiveStressAverage(from: Int, to: Int) async -> Double? {
+        let hr = await repo.hrSamples(from: from, to: to, limit: 200_000)
+        guard hr.count >= DaytimeStress.minHourHRSamples else { return nil }
+        let rr = (try? await repo.storeHandle()?.rrIntervals(
+            deviceId: repo.deviceId, from: from, to: to, limit: 200_000)) ?? []
+        let tz = TimeZone.current.secondsFromGMT(for: Date())
+        return await Task.detached(priority: .utility) {
+            DaytimeStress.analyze(hr: hr, rr: rr, tzOffsetSeconds: tz).dayMean
+        }.value
+    }
 
     private var sleepText: String {
         guard let m = displayDay?.totalSleepMin else { return "–" }

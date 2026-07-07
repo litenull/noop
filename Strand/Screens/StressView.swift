@@ -668,6 +668,39 @@ enum StressRamp {
     }
 }
 
+// MARK: - Dashboard stress snapshot
+
+/// Compact stress readout for Today dashboards: an intraday live average plus the latest historical
+/// stored stress point, falling back to the daily StressModel score when either side is unavailable.
+struct DashboardStressSnapshot: Equatable {
+    var live: Double?
+    var historical: Double?
+    var daily: Double?
+
+    static let empty = DashboardStressSnapshot(live: nil, historical: nil, daily: nil)
+
+    var primary: Double? { live ?? daily ?? historical }
+
+    func displayText(calibrating: String = String(localized: "Calibrating")) -> String {
+        let liveText = live.map { "Live \(Self.valueText($0))" }
+        let histText = historical.map { "Hist \(Self.valueText($0))" }
+        if let liveText, let histText { return "\(liveText) · \(histText)" }
+        if let liveText { return liveText }
+        if let histText { return histText }
+        if let daily { return Self.valueText(daily) }
+        return calibrating
+    }
+
+    static func latestHistorical(from stored: [(day: String, value: Double)], model: StressModel?) -> Double? {
+        if let stored = stored.last?.value { return min(max(stored, 0), 3) }
+        return model?.fullTrend.dropLast().last?.value
+    }
+
+    private static func valueText(_ value: Double) -> String {
+        String(format: "%.1f", min(max(value, 0), 3))
+    }
+}
+
 // MARK: - Stress model inputs (cache key)
 
 /// An `Equatable` snapshot of everything `StressModel.init` reads, used to decide

@@ -250,6 +250,8 @@ struct TodayView: View {
     // Design Reset / #582, the pinned "Your cards" values (Stress / Fitness age / Vitality), surfaced
     // on Today so the buried Explore features sit on the home screen. Loaded in loadAll; nil hides the row.
     @State private var stressToday: Double?
+    @State private var stressLiveToday: Double?
+    @State private var stressHistorical: Double?
     @State private var fitnessAgeToday: Double?
     @State private var vitalityToday: Double?
     /// Distinct days + sleep sessions imported from a Mi Band (Mi Fitness), for the Data Sources row.
@@ -2098,11 +2100,10 @@ struct TodayView: View {
             // DEBUG promo harness: pin the Stress card (0–3) to the active frame's value. No-op otherwise.
             if let f = DemoDayHarness.active { return "\(f.stress0to3)" }
             #endif
-            // #706/#684: Stress is baseline-relative, until the strap has banked enough worn nights to seed
-            // the 30-day RHR/HRV baseline StressView reads, there's no number to show. A bare ", " read like a
-            // broken card; show the honest calibrating state instead, matching StressView's empty/calibrating
-            // copy and the owner's reply on #706.
-            return stressToday.map { "\(Int($0.rounded()))" } ?? Self.calibratingPlaceholder
+            return DashboardStressSnapshot(live: stressLiveToday,
+                                           historical: stressHistorical,
+                                           daily: stressToday)
+                .displayText(calibrating: Self.calibratingPlaceholder)
         case .fitnessAge:
             return withUnit(fitnessAgeToday.map { "\(Int($0.rounded()))" } ?? "—")
         case .vitality:
@@ -2150,6 +2151,8 @@ struct TodayView: View {
                 let isPlaceholder = (value == "—" || value == Self.calibratingPlaceholder)
                 Text(value).font(StrandFont.rounded(18, weight: .semibold))
                     .foregroundStyle(isPlaceholder ? StrandPalette.textTertiary : StrandPalette.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
                 Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(StrandPalette.textTertiary)
             }
@@ -3630,6 +3633,7 @@ struct TodayView: View {
         // the SAME StressModel below, ties the pinned card to today's score; both then refresh on the shared
         // `repo.refreshSeq` task key (loadAll's TodayLoadKey) and stay in sync.
         async let stressStoredA      = repo.series(key: "stress", source: "my-whoop")
+        async let stressLiveA        = loadLiveStressAverage()
         async let fitnessAgeSeriesA  = repo.exploreSeries(key: "fitness_age", source: "my-whoop")
         async let vitalitySeriesA    = repo.exploreSeries(key: "vitality", source: "my-whoop")
 
@@ -3648,11 +3652,14 @@ struct TodayView: View {
         let xSleep = await xSleepA
         xiaomiDays = Set(xSteps.map(\.day) + xSleep.map(\.day)).count
         // Your cards (#582 / Design Reset): Stress / Fitness age / Vitality for the pinned home cards.
-        // #753: Stress mirrors StressView. `StressModel(days:stored:).score` is TODAY's score (stored row
-        // preferred, else derived off the live RHR/HRV baseline), so the pinned card never lags the detail
-        // page on a day with no banked stress row. nil (no usable signal) keeps the honest "Calibrating"
-        // placeholder, matching StressView's empty state. Fitness age / Vitality keep their merged reads.
-        stressToday = StressModel(days: repo.days, stored: await stressStoredA)?.score
+        // Stress now exposes the immediate intraday read plus the latest stored history point, so a baseline
+        // still calibrating does not hide values the app already has. The daily StressModel score remains the
+        // third fallback and still mirrors StressView once the baseline is ready.
+        let stressStored = await stressStoredA
+        let stressModel = StressModel(days: repo.days, stored: stressStored)
+        stressToday = stressModel?.score
+        stressHistorical = DashboardStressSnapshot.latestHistorical(from: stressStored, model: stressModel)
+        stressLiveToday = await stressLiveA
         fitnessAgeToday = (await fitnessAgeSeriesA).last?.value
         vitalityToday = (await vitalitySeriesA).last?.value
         // Hydration card (opt-in): today's stored total + the sex/Effort goal. Only loaded when the
@@ -3679,6 +3686,8 @@ struct TodayView: View {
             xiaomiDays: xiaomiDays,
             xiaomiSleeps: xiaomiSleeps,
             stressToday: stressToday,
+            stressLiveToday: stressLiveToday,
+            stressHistorical: stressHistorical,
             fitnessAgeToday: fitnessAgeToday,
             vitalityToday: vitalityToday
         )
@@ -3697,10 +3706,27 @@ struct TodayView: View {
         xiaomiDays = c.xiaomiDays
         xiaomiSleeps = c.xiaomiSleeps
         stressToday = c.stressToday
+        stressLiveToday = c.stressLiveToday
+        stressHistorical = c.stressHistorical
         fitnessAgeToday = c.fitnessAgeToday
         vitalityToday = c.vitalityToday
         // Hydration is deliberately NOT part of the snapshot (#989): logging a drink never bumps
         // refreshSeq, so a restored total could be stale. It is re-read live instead (see loadAll).
+    }
+
+    private func loadLiveStressAverage() async -> Double? {
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: Date())
+        let from = Int(startOfDay.timeIntervalSince1970)
+        let to = Int(Date().timeIntervalSince1970)
+        let hr = await repo.hrSamples(from: from, to: to, limit: 200_000)
+        guard hr.count >= DaytimeStress.minHourHRSamples else { return nil }
+        let rr = (try? await repo.storeHandle()?.rrIntervals(
+            deviceId: repo.deviceId, from: from, to: to, limit: 200_000)) ?? []
+        let tz = TimeZone.current.secondsFromGMT(for: Date())
+        return await Task.detached(priority: .utility) {
+            DaytimeStress.analyze(hr: hr, rr: rr, tzOffsetSeconds: tz).dayMean
+        }.value
     }
 
     /// #989: today's hydration total + goal, re-read wherever staleness could show: the history-wide load,
@@ -4232,6 +4258,8 @@ struct TodayHistoryWideCache {
     let xiaomiDays: Int
     let xiaomiSleeps: Int
     let stressToday: Double?
+    let stressLiveToday: Double?
+    let stressHistorical: Double?
     let fitnessAgeToday: Double?
     let vitalityToday: Double?
     // Hydration total/goal intentionally absent (#989): mutations don't bump refreshSeq, so a cached
