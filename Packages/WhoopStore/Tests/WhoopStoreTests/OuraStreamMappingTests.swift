@@ -236,7 +236,7 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertTrue(sessions.isEmpty)
     }
 
-    func testOuraSleepMaterializerClearsPathologicalSingleStageTimeline() async throws {
+    func testOuraSleepMaterializerReplacesPathologicalSingleStageTimeline() async throws {
         let store = try await WhoopStore.inMemory()
         let events = (0..<60).map { i in
             sleepPhaseEvent(ts: ts + i * 300, phase: 3, index: i)
@@ -246,7 +246,8 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
         let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
         XCTAssertEqual(sessions.count, 1)
-        XCTAssertNil(sessions[0].stagesJSON)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["light"], 300)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["rem"], 0)
     }
 
     func testOuraSleepMaterializerRepairsExistingPathologicalTimelineWithoutNewEvents() async throws {
@@ -262,7 +263,8 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
         let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
         XCTAssertEqual(sessions.count, 1)
-        XCTAssertNil(sessions[0].stagesJSON)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["light"], 300)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["rem"], 0)
     }
 
     func testOuraSleepMaterializerRepairsShortAllRemTimeline() async throws {
@@ -278,6 +280,15 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
         let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
         XCTAssertEqual(sessions.count, 1)
-        XCTAssertNil(sessions[0].stagesJSON)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["light"], 85)
+        XCTAssertEqual(stageDict(sessions[0].stagesJSON)?["rem"], 0)
+    }
+
+    private func stageDict(_ json: String?) -> [String: Double]? {
+        guard let json, let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return dict.reduce(into: [String: Double]()) { out, item in
+            if let n = item.value as? NSNumber { out[item.key] = n.doubleValue }
+        }
     }
 }

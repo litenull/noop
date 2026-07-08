@@ -43,19 +43,21 @@ extension WhoopStore {
     private func repairPathologicalOuraSleepSessions(deviceId: String) throws -> Int {
         try syncWrite { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT startTs, stagesJSON FROM sleepSession
+                SELECT startTs, endTs, stagesJSON FROM sleepSession
                 WHERE deviceId = ? AND userEdited = 0 AND stagesJSON IS NOT NULL
                 """, arguments: [deviceId])
 
             var repaired = 0
             for row in rows {
                 let startTs: Int = row["startTs"]
+                let endTs: Int = row["endTs"]
                 let stagesJSON: String = row["stagesJSON"]
                 guard Self.isPathologicalSingleStageTimeline(stagesJSON) else { continue }
+                let fallbackJSON = Self.fallbackStageJSON(startTs: startTs, endTs: endTs)
                 try db.execute(sql: """
-                    UPDATE sleepSession SET stagesJSON = NULL
+                    UPDATE sleepSession SET stagesJSON = ?
                     WHERE deviceId = ? AND startTs = ? AND userEdited = 0
-                    """, arguments: [deviceId, startTs])
+                    """, arguments: [fallbackJSON, deviceId, startTs])
                 repaired += db.changesCount
             }
             return repaired
@@ -130,9 +132,9 @@ extension WhoopStore {
                 segments.append(OuraStageSegment(start: epoch.ts, end: epoch.ts + epochSeconds, stage: stage))
             }
         }
-        // All-REM/deep Oura BLE runs are decoder/padding failures; keep bounds, drop fake stages.
+        // All-REM/deep Oura BLE runs are decoder/padding failures; keep duration, drop fake stages.
         let json = isPathologicalSingleStageSleep(stageCounts: stageCounts, asleepSeconds: asleepSeconds)
-            ? nil
+            ? fallbackStageJSON(startTs: startTs, endTs: endTs)
             : encodeOuraSegments(segments)
         let efficiency = min(100, Double(asleepSeconds) / Double(max(1, endTs - startTs)) * 100)
         return CachedSleepSession(startTs: startTs, endTs: endTs, efficiency: efficiency,
@@ -203,6 +205,15 @@ extension WhoopStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(segments) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func fallbackStageJSON(startTs: Int, endTs: Int) -> String {
+        let lightMin = max(0, Double(endTs - startTs) / 60.0)
+        let stages: [String: Double] = ["awake": 0, "light": lightMin, "deep": 0, "rem": 0]
+        guard let data = try? JSONSerialization.data(withJSONObject: stages, options: [.sortedKeys]) else {
+            return "{\"awake\":0,\"deep\":0,\"light\":\(lightMin),\"rem\":0}"
+        }
         return String(decoding: data, as: UTF8.self)
     }
 }
