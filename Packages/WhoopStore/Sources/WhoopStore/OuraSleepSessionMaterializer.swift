@@ -8,11 +8,12 @@ extension WhoopStore {
     /// never reads or infers Oura readiness/sleep scores.
     @discardableResult
     public func materializeOuraSleepSessions(deviceId: String) async throws -> Int {
+        let repaired = try repairPathologicalOuraSleepSessions(deviceId: deviceId)
         let sessions = try syncRead { db in
             try Self.ouraSleepSessions(db: db, deviceId: deviceId)
         }
-        guard !sessions.isEmpty else { return 0 }
-        return try await upsertSleepSessions(sessions, deviceId: deviceId)
+        guard !sessions.isEmpty else { return repaired }
+        return repaired + (try await upsertSleepSessions(sessions, deviceId: deviceId))
     }
 
     private struct OuraPhaseEpoch {
@@ -26,10 +27,39 @@ extension WhoopStore {
         var stage: String
     }
 
+    private struct OuraDecodedStageSegment: Decodable {
+        var start: Int
+        var end: Int
+        var stage: String
+    }
+
     private static let ouraSleepPayloadDecoder = JSONDecoder()
+    private static let ouraStageSegmentDecoder = JSONDecoder()
     private static let ouraMinimumSleepSessionSeconds = 20 * 60
     private static let ouraMinimumPathologicalSessionSeconds = 2 * 60 * 60
     private static let ouraPathologicalDominantStageFraction = 0.95
+
+    private func repairPathologicalOuraSleepSessions(deviceId: String) throws -> Int {
+        try syncWrite { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT startTs, stagesJSON FROM sleepSession
+                WHERE deviceId = ? AND userEdited = 0 AND stagesJSON IS NOT NULL
+                """, arguments: [deviceId])
+
+            var repaired = 0
+            for row in rows {
+                let startTs: Int = row["startTs"]
+                let stagesJSON: String = row["stagesJSON"]
+                guard Self.isPathologicalSingleStageTimeline(stagesJSON) else { continue }
+                try db.execute(sql: """
+                    UPDATE sleepSession SET stagesJSON = NULL
+                    WHERE deviceId = ? AND startTs = ? AND userEdited = 0
+                    """, arguments: [deviceId, startTs])
+                repaired += db.changesCount
+            }
+            return repaired
+        }
+    }
 
     private static func ouraSleepSessions(db: Database, deviceId: String) throws -> [CachedSleepSession] {
         let rows = try Row.fetchAll(db, sql: """
@@ -123,6 +153,32 @@ extension WhoopStore {
         let total = stageCounts.values.reduce(0, +)
         guard total > 0, let dominant = stageCounts.values.max() else { return false }
         return Double(dominant) / Double(total) >= ouraPathologicalDominantStageFraction
+    }
+
+    private static func isPathologicalSingleStageTimeline(_ json: String) -> Bool {
+        guard let data = json.data(using: .utf8),
+              let segments = try? ouraStageSegmentDecoder.decode([OuraDecodedStageSegment].self, from: data) else {
+            return false
+        }
+
+        var stageSeconds: [String: Int] = [:]
+        var asleepSeconds = 0
+        for segment in segments {
+            let seconds = max(0, segment.end - segment.start)
+            guard seconds > 0 else { continue }
+            switch segment.stage {
+            case "wake", "awake":
+                continue
+            case "light", "deep", "rem":
+                asleepSeconds += seconds
+                stageSeconds[segment.stage, default: 0] += seconds
+            default:
+                continue
+            }
+        }
+        guard asleepSeconds >= ouraMinimumPathologicalSessionSeconds,
+              let dominant = stageSeconds.values.max() else { return false }
+        return Double(dominant) / Double(asleepSeconds) >= ouraPathologicalDominantStageFraction
     }
 
     private static func encodeOuraSegments(_ segments: [OuraStageSegment]) -> String? {

@@ -248,4 +248,20 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(sessions.count, 1)
         XCTAssertNil(sessions[0].stagesJSON)
     }
+
+    func testOuraSleepMaterializerRepairsExistingPathologicalTimelineWithoutNewEvents() async throws {
+        let store = try await WhoopStore.inMemory()
+        let badJSON = """
+        [{"start":\(ts),"end":\(ts + 18_000),"stage":"rem"}]
+        """
+        _ = try await store.upsertSleepSessions([
+            CachedSleepSession(startTs: ts, endTs: ts + 18_000, efficiency: 100,
+                               restingHr: nil, avgHrv: nil, stagesJSON: badJSON)
+        ], deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertNil(sessions[0].stagesJSON)
+    }
 }
