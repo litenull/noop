@@ -235,4 +235,17 @@ final class OuraStreamMappingTests: XCTestCase {
         let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
         XCTAssertTrue(sessions.isEmpty)
     }
+
+    func testOuraSleepMaterializerClearsPathologicalSingleStageTimeline() async throws {
+        let store = try await WhoopStore.inMemory()
+        let events = (0..<60).map { i in
+            sleepPhaseEvent(ts: ts + i * 300, phase: 3, index: i)
+        }
+        _ = try await store.insert(Streams(events: events), deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertNil(sessions[0].stagesJSON)
+    }
 }

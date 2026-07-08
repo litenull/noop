@@ -28,6 +28,8 @@ extension WhoopStore {
 
     private static let ouraSleepPayloadDecoder = JSONDecoder()
     private static let ouraMinimumSleepSessionSeconds = 20 * 60
+    private static let ouraMinimumPathologicalSessionSeconds = 2 * 60 * 60
+    private static let ouraPathologicalDominantStageFraction = 0.95
 
     private static func ouraSleepSessions(db: Database, deviceId: String) throws -> [CachedSleepSession] {
         let rows = try Row.fetchAll(db, sql: """
@@ -83,9 +85,13 @@ extension WhoopStore {
 
         var segments: [OuraStageSegment] = []
         var asleepSeconds = 0
+        var stageCounts: [Int: Int] = [:]
         for epoch in epochs {
             let stage = ouraStageName(phase: epoch.phase)
-            if epoch.phase != 0 { asleepSeconds += epochSeconds }
+            if epoch.phase != 0 {
+                asleepSeconds += epochSeconds
+                stageCounts[epoch.phase, default: 0] += 1
+            }
             if var lastSegment = segments.last, lastSegment.stage == stage, lastSegment.end == epoch.ts {
                 lastSegment.end = epoch.ts + epochSeconds
                 segments[segments.count - 1] = lastSegment
@@ -93,8 +99,10 @@ extension WhoopStore {
                 segments.append(OuraStageSegment(start: epoch.ts, end: epoch.ts + epochSeconds, stage: stage))
             }
         }
-
-        let json = encodeOuraSegments(segments)
+        // Long all-one-stage Oura BLE runs are decoder/padding failures; keep bounds, drop fake stages.
+        let json = isPathologicalSingleStageSleep(stageCounts: stageCounts, asleepSeconds: asleepSeconds)
+            ? nil
+            : encodeOuraSegments(segments)
         let efficiency = min(100, Double(asleepSeconds) / Double(max(1, endTs - startTs)) * 100)
         return CachedSleepSession(startTs: startTs, endTs: endTs, efficiency: efficiency,
                                   restingHr: nil, avgHrv: nil, stagesJSON: json)
@@ -108,6 +116,13 @@ extension WhoopStore {
         case 3: return "rem"
         default: return "wake"
         }
+    }
+
+    private static func isPathologicalSingleStageSleep(stageCounts: [Int: Int], asleepSeconds: Int) -> Bool {
+        guard asleepSeconds >= ouraMinimumPathologicalSessionSeconds else { return false }
+        let total = stageCounts.values.reduce(0, +)
+        guard total > 0, let dominant = stageCounts.values.max() else { return false }
+        return Double(dominant) / Double(total) >= ouraPathologicalDominantStageFraction
     }
 
     private static func encodeOuraSegments(_ segments: [OuraStageSegment]) -> String? {
