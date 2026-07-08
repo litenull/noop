@@ -36,7 +36,8 @@ extension WhoopStore {
     private static let ouraSleepPayloadDecoder = JSONDecoder()
     private static let ouraStageSegmentDecoder = JSONDecoder()
     private static let ouraMinimumSleepSessionSeconds = 20 * 60
-    private static let ouraMinimumPathologicalSessionSeconds = 2 * 60 * 60
+    private static let ouraMinimumPathologicalRemOrDeepSessionSeconds = 30 * 60
+    private static let ouraMinimumPathologicalLightSessionSeconds = 2 * 60 * 60
     private static let ouraPathologicalDominantStageFraction = 0.95
 
     private func repairPathologicalOuraSleepSessions(deviceId: String) throws -> Int {
@@ -129,7 +130,7 @@ extension WhoopStore {
                 segments.append(OuraStageSegment(start: epoch.ts, end: epoch.ts + epochSeconds, stage: stage))
             }
         }
-        // Long all-one-stage Oura BLE runs are decoder/padding failures; keep bounds, drop fake stages.
+        // All-REM/deep Oura BLE runs are decoder/padding failures; keep bounds, drop fake stages.
         let json = isPathologicalSingleStageSleep(stageCounts: stageCounts, asleepSeconds: asleepSeconds)
             ? nil
             : encodeOuraSegments(segments)
@@ -149,9 +150,11 @@ extension WhoopStore {
     }
 
     private static func isPathologicalSingleStageSleep(stageCounts: [Int: Int], asleepSeconds: Int) -> Bool {
-        guard asleepSeconds >= ouraMinimumPathologicalSessionSeconds else { return false }
         let total = stageCounts.values.reduce(0, +)
-        guard total > 0, let dominant = stageCounts.values.max() else { return false }
+        guard total > 0,
+              let dominantEntry = stageCounts.max(by: { $0.value < $1.value }) else { return false }
+        guard asleepSeconds >= pathologicalMinimumSeconds(forPhase: dominantEntry.key) else { return false }
+        let dominant = dominantEntry.value
         return Double(dominant) / Double(total) >= ouraPathologicalDominantStageFraction
     }
 
@@ -176,9 +179,24 @@ extension WhoopStore {
                 continue
             }
         }
-        guard asleepSeconds >= ouraMinimumPathologicalSessionSeconds,
-              let dominant = stageSeconds.values.max() else { return false }
+        guard let dominantEntry = stageSeconds.max(by: { $0.value < $1.value }) else { return false }
+        guard asleepSeconds >= pathologicalMinimumSeconds(forStage: dominantEntry.key) else { return false }
+        let dominant = dominantEntry.value
         return Double(dominant) / Double(asleepSeconds) >= ouraPathologicalDominantStageFraction
+    }
+
+    private static func pathologicalMinimumSeconds(forPhase phase: Int) -> Int {
+        switch phase {
+        case 2, 3: return ouraMinimumPathologicalRemOrDeepSessionSeconds
+        default: return ouraMinimumPathologicalLightSessionSeconds
+        }
+    }
+
+    private static func pathologicalMinimumSeconds(forStage stage: String) -> Int {
+        switch stage {
+        case "deep", "rem": return ouraMinimumPathologicalRemOrDeepSessionSeconds
+        default: return ouraMinimumPathologicalLightSessionSeconds
+        }
     }
 
     private static func encodeOuraSegments(_ segments: [OuraStageSegment]) -> String? {
