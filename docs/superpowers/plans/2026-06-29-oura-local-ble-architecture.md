@@ -14,7 +14,7 @@ Replaces the current "honest dead-end" `OuraProbeSource` (Strand/BLE/OuraProbeSo
 - **Wizard:** `Strand/Screens/AddDeviceWizard.swift` (+ `android/.../ui/AddDeviceWizard.kt`). `DeviceType.oura` already exists, wired to the `OuraProbeSource` dead-end via `OuraPickList`; `finishAdd(makeActive:)` builds the `PairedDevice` per path.
 - **Scoring is stream-driven, per-device:** `Packages/StrandAnalytics` `RecoveryScorer.recovery(hrv:..., sleepPerf:...)`, `restingHR(_ hr:[HRSample]...)`, `DayOwnerResolver`, `AnalyticsEngine`, `SleepStager`. Recovery needs HRV (RMSSD ms) + sleeping resting-HR + a sleep/rest composite; strain needs the HR stream — all off the per-device `Streams` + sleep sessions. So **if the live source lands real hr/rr + HRV + sleep-phase data under its deviceId, the existing engine scores the Oura day with zero scorer changes.**
 
-**Honest-data invariant (hard):** Oura's own encrypted readiness/sleep scores are never read or surfaced. We decode only raw PPG/IBI/accel + the ring's open event tags (HR 0x55, IBI 0x44/0x60, RMSSD 0x5d, SpO2 0x6F/0x70/0x77, temp 0x46/0x75, sleep-phase 0x49/0x4B/0x4C/0x4E/0x4F/0x58) and compute NOOP's Charge/Rest ourselves. When a signal can't be read, the source stays at "—" (Huami precedent).
+**Honest-data invariant (hard):** Oura's own encrypted readiness/sleep scores are never read or surfaced. We decode only raw PPG/IBI/accel + the ring's open event tags (HR 0x55, IBI 0x44/0x60, RMSSD 0x5d, SpO2 0x6F/0x70/0x77, temp 0x46/0x75, sleep-phase 0x4B/0x4E/0x5A) and compute NOOP's Charge/Rest ourselves. When a signal can't be read, the source stays at "—" (Huami precedent).
 
 ## 1. Clean-room protocol PACKAGE — `Packages/OuraProtocol/` (+ Kotlin `com.noop.oura.*`)
 
@@ -25,7 +25,7 @@ Swift modules under `Sources/OuraProtocol/`:
 - `Framing.swift` — encode command frame `2f <opcode-lo> <opcode-hi> [payload]`; reassemble notification fragments → complete records (open_oura cheatsheet; ringverse BLE.md).
 - `Auth.swift` — pure crypto state machine: `GetAuthNonce` (`2f012b`), accept 15-byte nonce, AES-128/ECB/PKCS7-pad with the install key, build `Authenticate` (`2f112d` + ciphertext); `InstallKey` (opcode `0x24`, 16-byte key, post-factory-reset). Key injected, never hardcoded (brief; open_ring PROTOCOL.md).
 - `Commands.swift` — opcode builders incl. Ring-3 live-HR enable (relue): `2f0220` → `2f032202 03` → `2f032602 02`; subscribe-events / battery / fetch-buffered (relue heartbeat-monitoring.md; open_oura).
-- `EventTags.swift` — tag dictionary enum: hr=0x55, ibi=0x44, ibiAmp=0x60, hrvRmssd=0x5d, spo2=0x6F/0x70/0x77, temp=0x46/0x75, sleepPhase∈{0x49,0x4B,0x4C,0x4E,0x4F,0x58}, ppg, motion, battery, met (ringverse oura/BLE.md; open_ring).
+- `EventTags.swift` — tag dictionary enum: hr=0x55, ibi=0x44, ibiAmp=0x60, hrvRmssd=0x5d, spo2=0x6F/0x70/0x77, temp=0x46/0x75, sleepPhase∈{0x4B,0x4E,0x5A}, ppg, motion, battery, met (ringverse oura/BLE.md; open_ring; corrected by the native `SleepPhase_OSSAv1` parser in open_oura).
 - `Decoders.swift` — pure per-tag byte→value decoders; each returns nil on a malformed/short record (open_ring PROTOCOL.md layouts).
 - `OuraEvents.swift` — decoded structs the driver emits (OuraHR/OuraIBI/OuraHRV/OuraSpO2/OuraTemp/OuraSleepPhase/OuraBattery).
 - `RingGen.swift` — `enum OuraRingGen { gen3, gen4, gen5 }` + per-gen caps/MTU/command-set + best-effort `recognise(advertisedName:)`/`from(model:)` (open_oura ring-5/ring-3; open_ring ring-4).
@@ -97,4 +97,3 @@ Decoded events map onto the EXISTING `Streams` and persist under the ring's devi
 **Phase G — cleanup.** G1 delete OuraProbeSource.swift/.kt + wizard refs once D/F land; keep the Oura file-import lane (StrandImport/OuraExportParser.swift) as documented fallback. G2 update ATTRIBUTION.md/protocol docs to cite RE resources facts-only.
 
 **Verification (per build-env memory):** Phases A/B/C via SPM `swift test` (OuraProtocol, WhoopStore) + Android JVM tests; D/E/F via the live-sim screenshot harness; central build-verify of all three platforms once at the end (no per-lane gradle).
-

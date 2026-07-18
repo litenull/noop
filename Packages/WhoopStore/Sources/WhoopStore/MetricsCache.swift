@@ -98,31 +98,36 @@ extension WhoopStore {
     @discardableResult
     public func upsertSleepSessions(_ sessions: [CachedSleepSession], deviceId: String) async throws -> Int {
         try syncWrite { db in
-            var n = 0
-            for s in sessions {
-                try db.execute(sql: """
-                    INSERT INTO sleepSession
-                        (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
-                         userEdited, startTsAdjusted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(deviceId, startTs) DO UPDATE SET
-                        -- A user-corrected night keeps its hand-set bed/wake times and stage breakdown;
-                        -- a recompute/import refresh (this path) updates only the derived vitals. The
-                        -- `userEdited` flag is preserved, never cleared here, so a later strap re-sync
-                        -- can't revert a correction (the dedicated edit path is `applySleepEdit`).
-                        endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END,
-                        efficiency = excluded.efficiency,
-                        restingHr = excluded.restingHr,
-                        avgHrv = excluded.avgHrv,
-                        stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END,
-                        startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END,
-                        userEdited = sleepSession.userEdited
-                    """, arguments: [deviceId, s.startTs, s.endTs, s.efficiency,
-                                     s.restingHr, s.avgHrv, s.stagesJSON, s.userEdited, s.startTsAdjusted])
-                n += db.changesCount
-            }
-            return n
+            try Self.upsertSleepSessions(sessions, deviceId: deviceId, db: db)
         }
+    }
+
+    static func upsertSleepSessions(_ sessions: [CachedSleepSession], deviceId: String,
+                                    db: Database) throws -> Int {
+        var n = 0
+        for s in sessions {
+            try db.execute(sql: """
+                INSERT INTO sleepSession
+                    (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
+                     userEdited, startTsAdjusted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(deviceId, startTs) DO UPDATE SET
+                    -- A user-corrected night keeps its hand-set bed/wake times and stage breakdown;
+                    -- a recompute/import refresh (this path) updates only the derived vitals. The
+                    -- `userEdited` flag is preserved, never cleared here, so a later strap re-sync
+                    -- can't revert a correction (the dedicated edit path is `applySleepEdit`).
+                    endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END,
+                    efficiency = excluded.efficiency,
+                    restingHr = excluded.restingHr,
+                    avgHrv = excluded.avgHrv,
+                    stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END,
+                    startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END,
+                    userEdited = sleepSession.userEdited
+                """, arguments: [deviceId, s.startTs, s.endTs, s.efficiency,
+                                 s.restingHr, s.avgHrv, s.stagesJSON, s.userEdited, s.startTsAdjusted])
+            n += db.changesCount
+        }
+        return n
     }
 
     /// Hand-correct a sleep session's bed (onset) and/or wake (end) time. Sets `userEdited = 1` so the

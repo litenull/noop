@@ -328,10 +328,11 @@ public enum OuraDecoders {
         return String(bytes: rec.payload, encoding: .utf8)
     }
 
-    // MARK: - Sleep phase, 2-bit codes (0x4E / 0x5A; s6.12)
+    // MARK: - Sleep phase, 2-bit codes (0x4B / 0x4E / 0x5A; s6.12)
 
-    /// Decode the 0x4E/0x5A sleep_phase_details: byte6 = header; phase codes are 2-bit, 4 per byte
-    /// (bits [7:6][5:4][3:2][1:0]); codes 0=awake,1=light,2=deep,3=REM. Per OURA_PROTOCOL.md s6.12.
+    /// Decode the 0x4B/0x4E/0x5A sleep_phase records: byte6 = header; phase codes are 2-bit, 4 per byte
+    /// (bits [7:6][5:4][3:2][1:0]); codes 0=deep,1=light,2=REM,3=awake (native `SleepPhase_OSSAv1` enum
+    /// / cloud-API hypnogram order; an earlier 0=awake reading was wrong). Per OURA_PROTOCOL.md s6.12.
     /// Returns nil on a short body. The header byte is skipped; phase bytes follow.
     public static func decodeSleepPhase(_ rec: OuraRecord) -> [OuraSleepPhase]? {
         let b = rec.payload

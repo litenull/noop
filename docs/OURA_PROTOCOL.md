@@ -349,12 +349,12 @@ bits 14–15 : qual_b
 - This is the primary UTC anchor (§5.5). [open_ring][ringverse]
 
 ### 6.12 Sleep architecture
-- **`0x4E` / `0x5A` `sleep_phase_details`** (≥19 B): byte6 = header; phase codes are **2-bit**, 4 per byte (bits `[7:6][5:4][3:2][1:0]`); codes **0=awake, 1=light, 2=deep, 3=REM**. [ringverse]
+- **`0x4B` / `0x4E` / `0x5A` `sleep_phase_information/details/data`** (≥19 B): byte6 = header; phase codes are **2-bit**, 4 per byte (bits `[7:6][5:4][3:2][1:0]`); codes **0=deep, 1=light, 2=REM, 3=awake**. Mapping per the native `SleepPhase_OSSAv1` enum ([oura-rs] `crates/oura-protocol/src/events.rs`) and the cloud-API hypnogram order (1=deep, 2=light, 3=REM, 4=awake). **CORRECTION:** this section previously read `0=awake, 1=light, 2=deep, 3=REM` attributed to [ringverse]; ringverse documents only the 2-bit packing, never the code→stage mapping, and that reading flipped deep/awake and REM/deep. `0x4B` was previously mis-listed as a sleep-summary variant; [oura-rs] decodes all three tags with the same 2-bit phase decoder. [oura-rs][ringverse]
 - **`0x6A` `sleep_period_info`** (14 B): bytes6–9 four int8 metrics; bytes10–11 `uint8/8.0`; byte12 motion-seconds uint8; byte13 sleep-state int8; bytes14–15 `uint16 LE / 65536`. [ringverse]
 - **`0x72` `sleep_acm_period`** (16 B): values0–2 = `whole(8)+frac(8)/255`; values3–5 = `whole(4)+frac(12)/4095`. [ringverse]
 - **`0x49` `sleep_summary_1`**: start/end as uint16 LE minutes-before-event. [ringverse]
 - **`0x76` `bedtime_period`**: start/end as uint32 LE ringTimestamps → map to UTC (§5.5). [ringverse]
-- Tags `0x48,0x4A–0x4D,0x4F,0x57,0x58` are additional sleep summary/feature variants in the dictionary; layouts **(UNVERIFIED)** - decode only after fixtures. [ringverse]
+- Tags `0x48,0x4A,0x4C,0x4D,0x4F,0x57,0x58` are additional sleep summary/feature variants in the dictionary; layouts **(UNVERIFIED)** - decode only after fixtures. (`0x4B` is NOT a summary: it is a phase record, above.) [ringverse]
 
 ### 6.13 Motion / activity
 - **`0x47` `motion_events`** (variable): byte6 bits`[7:5]`=field_a, `[4:0]`=field_b; bytes7–9 = three **int8 × 8** axis magnitudes; optional bytes10–11. [ringverse]
@@ -421,8 +421,8 @@ bits 14–15 : qual_b
 ### 7.3 NOOP decoder build guidance
 1. **Single TLV parser** (§2.3) for all generations - the framing is generation-invariant. Branch only on: MTU clamp (203 vs 247) and Gen-5 extra-char presence (ignore in v1).
 2. **Generation detection:** read product info (`0x18 03 18 00 10`) → hardware id (e.g. `BLB_03`), and firmware (`0x08`). Map to Gen 3/4/5 to set MTU and pick verified-vs-unverified layout confidence.
-3. **Trust tiers in the decoder:** Tier A (verified, ship now) = TLV framing, auth, GetEvents cursor, live-HR `0x02`, `0x60`/`0x80` IBI, `0x46`/`0x69`/`0x75` temp, `0x6F`/`0x7B` SpO2, `0x42` time-sync, `0x0D` battery, `0x45`/`0x53` state, `0x6B` motion. Tier B (UNVERIFIED, fixture-gate before use) = `0x49/0x4B/0x4C/0x4F/0x57/0x58` sleep summaries, `0x50/0x51/0x52` activity-MET, `0x7E/0x7F` steps, `0x70` smoothed SpO2, the protobuf `0x55/0x59` interpretation (do **not** ship).
-4. **HRV/sleep:** consume the ring's `0x5D` (HRV) and `0x4E/0x5A` (2-bit phase codes) tags AND independently reconstruct from raw IBI/PPG for NOOP's own scoring. Never read Oura feature `0x06` (encrypted API).
+3. **Trust tiers in the decoder:** Tier A (verified, ship now) = TLV framing, auth, GetEvents cursor, live-HR `0x02`, `0x60`/`0x80` IBI, `0x46`/`0x69`/`0x75` temp, `0x6F`/`0x7B` SpO2, `0x42` time-sync, `0x0D` battery, `0x45`/`0x53` state, `0x6B` motion, `0x4B`/`0x4E`/`0x5A` sleep-phase codes (mapping per s6.12). Tier B (UNVERIFIED, fixture-gate before use) = `0x49/0x4C/0x4F/0x57/0x58` sleep summaries, `0x50/0x51/0x52` activity-MET, `0x7E/0x7F` steps, `0x70` smoothed SpO2, the protobuf `0x55/0x59` interpretation (do **not** ship).
+4. **HRV/sleep:** consume the ring's `0x5D` (HRV) and `0x4B`/`0x4E`/`0x5A` (2-bit phase codes) tags AND independently reconstruct from raw IBI/PPG for NOOP's own scoring. Never read Oura feature `0x06` (encrypted API).
 
 ---
 

@@ -36,7 +36,7 @@ object OuraStreamMapping {
     /** The event `kind` recorded for the ring's own open HRV (0x5D) tag. Must match Swift exactly. */
     const val EVENT_HRV = "OURA_HRV"
 
-    /** The event `kind` recorded for the ring's own open sleep-phase (0x49.../0x58) tags. */
+    /** The event `kind` recorded for the ring's own open sleep-phase (0x4B/0x4E/0x5A) tags. */
     const val EVENT_SLEEP_PHASE = "OURA_SLEEP_PHASE"
 
     /** Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0. */

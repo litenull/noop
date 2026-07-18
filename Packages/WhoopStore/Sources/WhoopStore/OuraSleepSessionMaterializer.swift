@@ -8,17 +8,25 @@ extension WhoopStore {
     /// never reads or infers Oura readiness/sleep scores.
     @discardableResult
     public func materializeOuraSleepSessions(deviceId: String) async throws -> Int {
-        let repaired = try repairPathologicalOuraSleepSessions(deviceId: deviceId)
-        let sessions = try syncRead { db in
-            try Self.ouraSleepSessions(db: db, deviceId: deviceId)
+        try syncWrite { db in
+            let repaired = try Self.repairPathologicalOuraSleepSessions(db: db, deviceId: deviceId)
+            let materialization = try Self.ouraSleepMaterialization(db: db, deviceId: deviceId)
+            guard !materialization.epochs.isEmpty else { return repaired }
+
+            let upserted = try Self.upsertSleepSessions(materialization.sessions, deviceId: deviceId, db: db)
+            try Self.repairOuraSleepStates(materialization.epochs, deviceId: deviceId, db: db)
+            return repaired + upserted
         }
-        guard !sessions.isEmpty else { return repaired }
-        return repaired + (try await upsertSleepSessions(sessions, deviceId: deviceId))
     }
 
     private struct OuraPhaseEpoch {
         let ts: Int
         let phase: Int
+    }
+
+    private struct OuraSleepMaterialization {
+        let epochs: [OuraPhaseEpoch]
+        let sessions: [CachedSleepSession]
     }
 
     private struct OuraStageSegment: Encodable {
@@ -39,32 +47,33 @@ extension WhoopStore {
     private static let ouraMinimumPathologicalRemOrDeepSessionSeconds = 30 * 60
     private static let ouraMinimumPathologicalLightSessionSeconds = 2 * 60 * 60
     private static let ouraPathologicalDominantStageFraction = 0.95
+    /// Session split threshold in 5-min epochs (12 = 60 min). Smaller gaps stay inside the session as
+    /// stage-less holes; bigger ones mark two separate sleeps.
+    private static let ouraMaxSessionHoleEpochs = 12
 
-    private func repairPathologicalOuraSleepSessions(deviceId: String) throws -> Int {
-        try syncWrite { db in
-            let rows = try Row.fetchAll(db, sql: """
-                SELECT startTs, endTs, stagesJSON FROM sleepSession
-                WHERE deviceId = ? AND userEdited = 0 AND stagesJSON IS NOT NULL
-                """, arguments: [deviceId])
+    private static func repairPathologicalOuraSleepSessions(db: Database, deviceId: String) throws -> Int {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT startTs, endTs, stagesJSON FROM sleepSession
+            WHERE deviceId = ? AND userEdited = 0 AND stagesJSON IS NOT NULL
+            """, arguments: [deviceId])
 
-            var repaired = 0
-            for row in rows {
-                let startTs: Int = row["startTs"]
-                let endTs: Int = row["endTs"]
-                let stagesJSON: String = row["stagesJSON"]
-                guard Self.isPathologicalSingleStageTimeline(stagesJSON) else { continue }
-                let fallbackJSON = Self.fallbackStageJSON(startTs: startTs, endTs: endTs)
-                try db.execute(sql: """
-                    UPDATE sleepSession SET stagesJSON = ?
-                    WHERE deviceId = ? AND startTs = ? AND userEdited = 0
-                    """, arguments: [fallbackJSON, deviceId, startTs])
-                repaired += db.changesCount
-            }
-            return repaired
+        var repaired = 0
+        for row in rows {
+            let startTs: Int = row["startTs"]
+            let endTs: Int = row["endTs"]
+            let stagesJSON: String = row["stagesJSON"]
+            guard isPathologicalSingleStageTimeline(stagesJSON) else { continue }
+            let fallbackJSON = fallbackStageJSON(startTs: startTs, endTs: endTs)
+            try db.execute(sql: """
+                UPDATE sleepSession SET stagesJSON = ?
+                WHERE deviceId = ? AND startTs = ? AND userEdited = 0
+                """, arguments: [fallbackJSON, deviceId, startTs])
+            repaired += db.changesCount
         }
+        return repaired
     }
 
-    private static func ouraSleepSessions(db: Database, deviceId: String) throws -> [CachedSleepSession] {
+    private static func ouraSleepMaterialization(db: Database, deviceId: String) throws -> OuraSleepMaterialization {
         let rows = try Row.fetchAll(db, sql: """
             SELECT ts, payloadJSON FROM event
             WHERE deviceId = ? AND kind = ?
@@ -79,7 +88,9 @@ extension WhoopStore {
             }
             return OuraPhaseEpoch(ts: ts, phase: phase)
         }
-        guard !epochs.isEmpty else { return [] }
+        guard !epochs.isEmpty else {
+            return OuraSleepMaterialization(epochs: [], sessions: [])
+        }
 
         let epochSeconds = OuraStreamMapping.sleepPhaseEpochSeconds
         var sessions: [CachedSleepSession] = []
@@ -90,15 +101,51 @@ extension WhoopStore {
             sessions.append(session)
         }
 
+        // Snap epochs onto a 5-min cadence anchored at each session's OWN first epoch. History
+        // re-fetches (cursor reset, mapping-revision replay) re-anchor the SAME banked record to a ts a
+        // few seconds off, so the raw stream holds near-duplicate epochs ±jitter; an exact-300s chain
+        // shatters on every one of them and the <20-min shard filter then drops the whole night.
+        // Slot-snapping collapses those duplicates (first wins) without moving the session's recorded
+        // start: only cadence WITHIN a session is normalised, which is reconstruction of the ring's
+        // 300s-epoch sequence, not a guess at new timestamps.
+        var sessionOrigin = 0
+        var lastSlot = 0
         for epoch in epochs {
-            if let last = current.last, epoch.ts - last.ts != epochSeconds {
+            if current.isEmpty {
+                sessionOrigin = epoch.ts
+                lastSlot = 0
+                current.append(epoch)
+                continue
+            }
+            let slot = (epoch.ts - sessionOrigin + epochSeconds / 2) / epochSeconds
+            if slot == lastSlot { continue }   // duplicate of the same epoch under a shifted anchor
+            if slot - lastSlot > Self.ouraMaxSessionHoleEpochs {
                 finishCurrent()
                 current.removeAll(keepingCapacity: true)
+                sessionOrigin = epoch.ts
+                lastSlot = 0
+                current.append(epoch)
+                continue
             }
-            current.append(epoch)
+            current.append(OuraPhaseEpoch(ts: sessionOrigin + slot * epochSeconds, phase: epoch.phase))
+            lastSlot = slot
         }
         finishCurrent()
-        return sessions
+        return OuraSleepMaterialization(epochs: epochs, sessions: sessions)
+    }
+
+    private static func repairOuraSleepStates(_ epochs: [OuraPhaseEpoch], deviceId: String,
+                                              db: Database) throws {
+        // sleepStateSample is derived from the stage enum, unlike the raw phase event. Correct rows
+        // written under older mappings, including exact-timestamp conflicts that history replay keeps.
+        let stateStatement = try db.cachedStatement(sql: """
+            INSERT INTO sleepStateSample (deviceId, ts, state) VALUES (?, ?, ?)
+            ON CONFLICT(deviceId, ts) DO UPDATE SET state = excluded.state
+            WHERE sleepStateSample.state <> excluded.state
+            """)
+        for epoch in epochs {
+            try stateStatement.execute(arguments: [deviceId, epoch.ts, epoch.phase == 3 ? 0 : 2])
+        }
     }
 
     private static func ouraSleepPhase(fromPayloadJSON json: String) -> Int? {
@@ -114,14 +161,14 @@ extension WhoopStore {
         let startTs = first.ts
         let endTs = last.ts + epochSeconds
         guard endTs - startTs >= ouraMinimumSleepSessionSeconds else { return nil }
-        guard epochs.contains(where: { $0.phase != 0 }) else { return nil }
+        guard epochs.contains(where: { $0.phase != 3 }) else { return nil }   // need some asleep epoch (3 = awake)
 
         var segments: [OuraStageSegment] = []
         var asleepSeconds = 0
         var stageCounts: [Int: Int] = [:]
         for epoch in epochs {
             let stage = ouraStageName(phase: epoch.phase)
-            if epoch.phase != 0 {
+            if epoch.phase != 3 {   // 3 = awake; deep(0)/light(1)/rem(2) are asleep
                 asleepSeconds += epochSeconds
                 stageCounts[epoch.phase, default: 0] += 1
             }
@@ -141,12 +188,14 @@ extension WhoopStore {
                                   restingHr: nil, avgHrv: nil, stagesJSON: json)
     }
 
+    /// Stage names for the 2-bit wire codes: 0=deep, 1=light, 2=rem, 3=wake (per the native
+    /// `SleepPhase_OSSAv1` enum / cloud-API hypnogram order; see OuraSleepStage).
     private static func ouraStageName(phase: Int) -> String {
         switch phase {
-        case 0: return "wake"
+        case 0: return "deep"
         case 1: return "light"
-        case 2: return "deep"
-        case 3: return "rem"
+        case 2: return "rem"
+        case 3: return "wake"
         default: return "wake"
         }
     }
@@ -189,7 +238,7 @@ extension WhoopStore {
 
     private static func pathologicalMinimumSeconds(forPhase phase: Int) -> Int {
         switch phase {
-        case 2, 3: return ouraMinimumPathologicalRemOrDeepSessionSeconds
+        case 0, 2: return ouraMinimumPathologicalRemOrDeepSessionSeconds   // deep / REM
         default: return ouraMinimumPathologicalLightSessionSeconds
         }
     }

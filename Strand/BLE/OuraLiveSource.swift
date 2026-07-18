@@ -1102,9 +1102,13 @@ public enum OuraKeyStore {
 /// on every single connect. Unlike `OuraKeyStore` this is NOT sensitive - it's an opaque ring-clock tick
 /// counter, not a credential - so plain `UserDefaults` is the right (and simplest) store.
 enum OuraHistoryCursorStore {
-    /// Mapping revision 6 replaces fake all-REM/all-deep timelines with duration-only fallback stages and
-    /// replays still-banked history once, so older installs do not show zero-minute repaired nights.
-    private static let mappingRevision = 6
+    /// Mapping revision 7 corrects the sleep-stage code mapping (0=deep/1=light/2=rem/3=awake per the
+    /// native enum; the old 0=awake reading flipped deep/awake and REM/deep) and starts decoding the
+    /// 0x4B sleep_phase_information tag, so replay still-banked history once to pick up 0x4B records
+    /// that were silently dropped. Re-materialization re-interprets already-stored events (they hold
+    /// raw wire codes) and rewrites the derived coarse sleep-state rows, so past nights re-stage
+    /// correctly without another replay.
+    private static let mappingRevision = 7
     private static func key(deviceId: String) -> String { "com.noop.oura.historyCursor.\(deviceId)" }
     private static func revisionKey(deviceId: String) -> String { "com.noop.oura.historyCursor.mappingRevision.\(deviceId)" }
 
@@ -1120,8 +1124,10 @@ enum OuraHistoryCursorStore {
         let revKey = revisionKey(deviceId: deviceId)
         let storedRevision = UserDefaults.standard.integer(forKey: revKey)
         guard storedRevision >= mappingRevision else {
-            UserDefaults.standard.set(mappingRevision, forKey: revKey)
             save(0, deviceId: deviceId)
+            // Mark the revision only after the cursor reset. A termination between these writes repeats
+            // the harmless reset next launch instead of permanently skipping the required history replay.
+            UserDefaults.standard.set(mappingRevision, forKey: revKey)
             return 0
         }
         return read(deviceId: deviceId)

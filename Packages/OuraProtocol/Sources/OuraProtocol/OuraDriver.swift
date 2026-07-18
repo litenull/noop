@@ -300,7 +300,7 @@ public final class OuraDriver {
             return []
 
         // --- Tier A: Sleep phase (2-bit codes are verified) ---
-        case .sleepPhase, .sleepPhaseAlt:
+        case .sleepPhaseInfo, .sleepPhase, .sleepPhaseAlt:
             return (OuraDecoders.decodeSleepPhase(record) ?? []).map { OuraEvent.sleepPhase($0) }
 
         // --- Tier A: Lifecycle / state / time ---
@@ -344,7 +344,7 @@ public final class OuraDriver {
             return []
 
         // --- Tier B (only reached when allowTierB == true; otherwise dropped above) ---
-        case .sleepSummary1, .sleepSummaryB, .sleepSummaryC, .sleepSummaryD, .sleepSummaryE, .sleepSummaryF:
+        case .sleepSummary1, .sleepSummaryC, .sleepSummaryD, .sleepSummaryE, .sleepSummaryF:
             return [.tierB(OuraTierBSummary(tag: record.type, ringTimestamp: record.ringTimestamp,
                                             rawPayload: record.payload, kind: "sleep_summary"))]
         case .activityInfo:

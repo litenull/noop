@@ -53,13 +53,13 @@ public enum OuraEventTag: UInt8, Sendable, CaseIterable, Codable {
 
     // --- Sleep summaries (Tier B, UNVERIFIED) ---
     case sleepSummary1    = 0x49   // sleep_summary_1, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
-    case sleepSummaryB    = 0x4B   // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     case sleepSummaryC    = 0x4C   // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     case sleepSummaryD    = 0x4F   // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     case sleepSummaryE    = 0x57   // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     case sleepSummaryF    = 0x58   // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
 
     // --- Sleep phase codes (Tier A: 2-bit phase codes are byte-for-byte verified) ---
+    case sleepPhaseInfo   = 0x4B   // sleep_phase_information (2-bit codes), [oura-rs] native parser
     case sleepPhase       = 0x4E   // sleep_phase_details (2-bit codes), OURA_PROTOCOL.md s6.12
     case sleepPhaseAlt    = 0x5A   // sleep_phase_details alias, OURA_PROTOCOL.md s6.12
 
@@ -79,7 +79,7 @@ public enum OuraEventTag: UInt8, Sendable, CaseIterable, Codable {
     /// behind an explicit allowTierB flag. Per OURA_PROTOCOL.md s7.3 and the brief's TIER DISCIPLINE.
     public var tier: TrustTier {
         switch self {
-        case .sleepSummary1, .sleepSummaryB, .sleepSummaryC, .sleepSummaryD, .sleepSummaryE,
+        case .sleepSummary1, .sleepSummaryC, .sleepSummaryD, .sleepSummaryE,
              .sleepSummaryF, .activityInfo, .activitySummary1, .activitySummary2,
              .realSteps1, .realSteps2, .spo2Smoothed:
             return .tierB
@@ -112,11 +112,11 @@ public enum OuraEventTag: UInt8, Sendable, CaseIterable, Codable {
         case .motion: return "MOTION"
         case .motionPeriod: return "MOTION_PERIOD"
         case .sleepSummary1: return "SLEEP_SUMMARY_1"
-        case .sleepSummaryB: return "SLEEP_SUMMARY_4B"
         case .sleepSummaryC: return "SLEEP_SUMMARY_4C"
         case .sleepSummaryD: return "SLEEP_SUMMARY_4F"
         case .sleepSummaryE: return "SLEEP_SUMMARY_57"
         case .sleepSummaryF: return "SLEEP_SUMMARY_58"
+        case .sleepPhaseInfo: return "SLEEP_PHASE_INFO"
         case .sleepPhase: return "SLEEP_PHASE"
         case .sleepPhaseAlt: return "SLEEP_PHASE_ALT"
         case .activityInfo: return "ACTIVITY_INFO"

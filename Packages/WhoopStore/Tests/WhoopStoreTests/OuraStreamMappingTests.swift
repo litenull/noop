@@ -87,6 +87,7 @@ final class OuraStreamMappingTests: XCTestCase {
     // MARK: - Sleep phase -> events[OURA_SLEEP_PHASE] + sleepState
 
     func testSleepPhaseMapsToEventAndSleepStateWithFiveMinuteEpochs() {
+        // Codes per the native SleepPhase_OSSAv1 enum: deep=0, light=1, rem=2, awake=3.
         let s = OuraStreamMapping.streams(from: [
             .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 0, stage: .deep)),
             .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 1, stage: .rem)),
@@ -94,7 +95,7 @@ final class OuraStreamMappingTests: XCTestCase {
         ], at: ts)
         XCTAssertEqual(s.events.count, 3)
         XCTAssertTrue(s.events.allSatisfy { $0.kind == OuraStreamMapping.sleepPhaseEventKind })
-        XCTAssertEqual(s.events.map { $0.payload["phase"] }, [.int(2), .int(3), .int(0)])
+        XCTAssertEqual(s.events.map { $0.payload["phase"] }, [.int(0), .int(2), .int(3)])
         XCTAssertEqual(s.events.map { $0.payload["index"] }, [.int(0), .int(1), .int(2)])
         XCTAssertEqual(s.events.map { $0.ts }, [ts, ts + 300, ts + 600])
         XCTAssertEqual(s.sleepState, [
@@ -177,6 +178,7 @@ final class OuraStreamMappingTests: XCTestCase {
 
     func testOuraSleepPhaseEventsMaterializeSleepSessionRows() async throws {
         let store = try await WhoopStore.inMemory()
+        // Codes: 0=deep, 1=light, 2=rem, 3=awake.
         _ = try await store.insert(Streams(events: [
             sleepPhaseEvent(ts: ts, phase: 0, index: 0),
             sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
@@ -196,11 +198,12 @@ final class OuraStreamMappingTests: XCTestCase {
         let data = try XCTUnwrap(sessions[0].stagesJSON?.data(using: .utf8))
         let segments = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
         XCTAssertEqual(segments.count, 4)
-        XCTAssertEqual(segments.map { $0["stage"] as? String }, ["wake", "light", "deep", "rem"])
+        XCTAssertEqual(segments.map { $0["stage"] as? String }, ["deep", "light", "rem", "wake"])
     }
 
     func testOuraSleepMaterializerSplitsGapsAndIsIdempotent() async throws {
         let store = try await WhoopStore.inMemory()
+        // Two bouts 10_000 s apart (> 60 min hole threshold) -> two sessions.
         _ = try await store.insert(Streams(events: [
             sleepPhaseEvent(ts: ts, phase: 1, index: 0),
             sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
@@ -220,15 +223,82 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.endTs), [ts + 1_200, ts + 11_200])
     }
 
+    func testOuraSleepMaterializerKeepsSmallHolesInsideSession() async throws {
+        let store = try await WhoopStore.inMemory()
+        // A 10-minute hole (2 missing epochs) must NOT split the night; a 10_000 s gap still does.
+        _ = try await store.insert(Streams(events: [
+            sleepPhaseEvent(ts: ts, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 0, index: 1),
+            sleepPhaseEvent(ts: ts + 1_200, phase: 1, index: 2),
+            sleepPhaseEvent(ts: ts + 1_500, phase: 2, index: 3),
+        ]), deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].startTs, ts)
+        XCTAssertEqual(sessions[0].endTs, ts + 1_800)
+    }
+
+    func testOuraSleepMaterializerToleratesAnchorJitterDuplicates() async throws {
+        let store = try await WhoopStore.inMemory()
+        // The SAME night re-fetched under a slightly different UTC anchor (history replay): near-duplicate
+        // epochs a few seconds off must collapse, not shatter the session into dropped shards.
+        _ = try await store.insert(Streams(events: [
+            sleepPhaseEvent(ts: ts, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 2, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 302, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 600, phase: 2, index: 2),
+            sleepPhaseEvent(ts: ts + 899, phase: 1, index: 3),
+            sleepPhaseEvent(ts: ts + 900, phase: 1, index: 3),
+        ]), deviceId: "oura-ring")
+
+        XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 1)
+        let sessions = try await store.sleepSessions(deviceId: "oura-ring", from: 0, to: Int.max, limit: 10)
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].startTs, ts)
+        XCTAssertEqual(sessions[0].endTs, ts + 1_200)
+    }
+
+    func testOuraSleepMaterializerRewritesPersistedCoarseStates() async throws {
+        let store = try await WhoopStore.inMemory()
+        let events = [
+            sleepPhaseEvent(ts: ts, phase: 0, index: 0),
+            sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
+            sleepPhaseEvent(ts: ts + 600, phase: 2, index: 2),
+            sleepPhaseEvent(ts: ts + 900, phase: 3, index: 3),
+        ]
+        _ = try await store.insert(Streams(
+            sleepState: [
+                SleepStateSample(ts: ts, state: 0),
+                SleepStateSample(ts: ts + 300, state: 2),
+                SleepStateSample(ts: ts + 600, state: 2),
+                SleepStateSample(ts: ts + 900, state: 2),
+            ],
+            events: events), deviceId: "oura-ring")
+
+        _ = try await store.materializeOuraSleepSessions(deviceId: "oura-ring")
+        let states = try await store.sleepStateSamples(
+            deviceId: "oura-ring", from: ts, to: ts + 901, limit: 10)
+        XCTAssertEqual(states, [
+            SleepStateSample(ts: ts, state: 2),
+            SleepStateSample(ts: ts + 300, state: 2),
+            SleepStateSample(ts: ts + 600, state: 2),
+            SleepStateSample(ts: ts + 900, state: 0),
+        ])
+    }
+
     func testOuraSleepMaterializerIgnoresShortOrAwakeOnlySequences() async throws {
         let store = try await WhoopStore.inMemory()
         _ = try await store.insert(Streams(events: [
             sleepPhaseEvent(ts: ts, phase: 1, index: 0),
             sleepPhaseEvent(ts: ts + 300, phase: 1, index: 1),
-            sleepPhaseEvent(ts: ts + 10_000, phase: 0, index: 0),
-            sleepPhaseEvent(ts: ts + 10_300, phase: 0, index: 1),
-            sleepPhaseEvent(ts: ts + 10_600, phase: 0, index: 2),
-            sleepPhaseEvent(ts: ts + 10_900, phase: 0, index: 3),
+            // All-awake (phase 3) bout: dropped even though it exceeds 20 min.
+            sleepPhaseEvent(ts: ts + 10_000, phase: 3, index: 0),
+            sleepPhaseEvent(ts: ts + 10_300, phase: 3, index: 1),
+            sleepPhaseEvent(ts: ts + 10_600, phase: 3, index: 2),
+            sleepPhaseEvent(ts: ts + 10_900, phase: 3, index: 3),
         ]), deviceId: "oura-ring")
 
         XCTAssertEqual(try await store.materializeOuraSleepSessions(deviceId: "oura-ring"), 0)
@@ -238,8 +308,9 @@ final class OuraStreamMappingTests: XCTestCase {
 
     func testOuraSleepMaterializerReplacesPathologicalSingleStageTimeline() async throws {
         let store = try await WhoopStore.inMemory()
+        // 60 epochs of all-REM (phase 2) is decoder/padding garbage, not a real night.
         let events = (0..<60).map { i in
-            sleepPhaseEvent(ts: ts + i * 300, phase: 3, index: i)
+            sleepPhaseEvent(ts: ts + i * 300, phase: 2, index: i)
         }
         _ = try await store.insert(Streams(events: events), deviceId: "oura-ring")
 

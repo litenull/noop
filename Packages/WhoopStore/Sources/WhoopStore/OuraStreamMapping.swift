@@ -28,7 +28,7 @@ public enum OuraStreamMapping {
     /// (`time_ms`/`b1`/`b2`) only, never a fabricated `rmssd_ms` (the b1/b2 byte -> ms scale is not
     /// Tier-A; see OURA_PROTOCOL.md s6.9). Must match the Kotlin twin (OuraStreamMapping.kt) exactly.
     public static let hrvEventKind = "OURA_HRV"
-    /// WhoopEvent.kind for a decoded sleep-phase code (2-bit: awake/light/deep/rem).
+    /// WhoopEvent.kind for a decoded sleep-phase code (2-bit: deep/light/rem/awake; see OuraSleepStage).
     public static let sleepPhaseEventKind = "OURA_SLEEP_PHASE"
     /// Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0.
     public static let sleepPhaseEpochSeconds = 5 * 60
@@ -40,7 +40,7 @@ public enum OuraStreamMapping {
     ///   - `.hrv`        (0x5D HRV tag, raw int8 b1/b2)  → `events:[WhoopEvent(kind: OURA_HRV)]`
     ///   - `.spo2`       (0x6F/0x70/0x77)              → `spo2:[SpO2Sample(raw_adc)]`
     ///   - `.temp`       (0x46/0x75)                    → `skinTemp:[SkinTempSample(raw_adc)]`
-    ///   - `.sleepPhase` (0x4E/0x5A 2-bit codes)        → `events:[WhoopEvent(kind: OURA_SLEEP_PHASE)]`
+    ///   - `.sleepPhase` (0x4B/0x4E/0x5A 2-bit codes)  → `events:[WhoopEvent(kind: OURA_SLEEP_PHASE)]`
     ///                                                            + `sleepState:[SleepStateSample]`
     ///   - `.battery`                                   → `battery:[BatterySample]`
     /// Every other event case (`.motion`, `.state`, `.timeSync`, `.rtcBeacon`, `.debugText`, `.tierB`,

@@ -132,13 +132,32 @@ class DecoderGoldenTest {
 
     @Test
     fun testSleepPhase0x4E() {
-        // header 0x00, phase byte 0x6C = bits 01 10 11 00 -> light, deep, rem, awake.
+        // header 0x00, phase byte 0x6C = bits 01 10 11 00 -> light, rem, awake, deep
+        // (codes 0=deep, 1=light, 2=rem, 3=awake per the native SleepPhase_OSSAv1 enum).
         val rec = record("4e0602000100006c")
         val phases = OuraDecoders.decodeSleepPhase(rec)
         assertEquals(
             listOf(
                 OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.LIGHT),
-                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.DEEP),
+                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.REM),
+                OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.AWAKE),
+                OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.DEEP),
+            ),
+            phases,
+        )
+    }
+
+    // MARK: - 0x4B sleep phase information (same 2-bit decoder as 0x4E/0x5A)
+
+    @Test
+    fun testSleepPhase0x4B() {
+        // header 0x00, phase byte 0x1B = bits 00 01 10 11 -> deep, light, rem, awake.
+        val rec = record("4b0602000100001b")
+        val phases = OuraDecoders.decodeSleepPhase(rec)
+        assertEquals(
+            listOf(
+                OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP),
+                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT),
                 OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM),
                 OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE),
             ),

@@ -77,10 +77,10 @@ class OuraStreamMappingTest {
         assertEquals(OuraStreamMapping.EVENT_SLEEP_PHASE, deep.kind)
         assertEquals("OURA_SLEEP_PHASE", deep.kind)
         assertEquals(base + 2, deep.ts)
-        assertEquals(2, deep.payload["phase"])           // OuraSleepStage.DEEP.raw == 2
+        assertEquals(0, deep.payload["phase"])           // OuraSleepStage.DEEP.raw == 0
         assertEquals(0, deep.payload["index"])
         assertEquals(base + 2 + 300, s.events[1].ts)
-        assertEquals(3, s.events[1].payload["phase"])     // REM.raw == 3
+        assertEquals(2, s.events[1].payload["phase"])     // REM.raw == 2
         assertEquals(base + 2 + 600, s.events[2].ts)
         assertEquals(listOf(2, 2, 0), s.sleepState.map { it.state })
         assertEquals(listOf(base + 2, base + 2 + 300, base + 2 + 600), s.sleepState.map { it.ts })

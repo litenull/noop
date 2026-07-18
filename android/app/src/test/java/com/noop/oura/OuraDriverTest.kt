@@ -318,6 +318,26 @@ class OuraDriverTest {
     }
 
     @Test
+    fun testIngestDecodesSleepPhaseInfoAsTierA() {
+        val tag = OuraEventTag.SLEEP_PHASE_INFO
+        assertEquals(0x4B, tag.raw)
+        assertEquals(TrustTier.TIER_A, tag.tier)
+        assertEquals("SLEEP_PHASE_INFO", tag.tagName)
+
+        val d = OuraDriver(ringGen = OuraRingGen.GEN3, authKey = key)
+        val rec = OuraFraming.parseRecord(bytes("4b0602000100001b"))!!
+        assertEquals(
+            listOf(
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE)),
+            ),
+            d.ingest(rec),
+        )
+    }
+
+    @Test
     fun testIngestUnknownTagYieldsNothing() {
         val d = OuraDriver(ringGen = OuraRingGen.GEN3, authKey = key)
         // 0x99 is not in the dictionary -> [] (never a guessed value).

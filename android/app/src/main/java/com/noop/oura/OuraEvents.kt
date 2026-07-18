@@ -39,12 +39,17 @@ data class OuraTemp(val ringTimestamp: Long, val celsius: Double)
  */
 data class OuraBattery(val percent: Int, val voltageMv: Int? = null, val charging: Boolean? = null)
 
-/** Sleep phase code (OURA_PROTOCOL.md s6.12): 2-bit codes 0=awake, 1=light, 2=deep, 3=REM. */
+/**
+ * Sleep phase code (OURA_PROTOCOL.md s6.12): 2-bit codes 0=deep, 1=light, 2=REM, 3=awake.
+ * Mapping per the native `SleepPhase_OSSAv1` enum ([oura-rs]) and the cloud-API
+ * hypnogram order (1=deep, 2=light, 3=REM, 4=awake); an earlier 0=awake reading was
+ * wrong and flipped deep/awake + REM/deep.
+ */
 enum class OuraSleepStage(val raw: Int) {
-    AWAKE(0),
+    DEEP(0),
     LIGHT(1),
-    DEEP(2),
-    REM(3);
+    REM(2),
+    AWAKE(3);
 
     companion object {
         private val byRaw = entries.associateBy { it.raw }
@@ -52,7 +57,7 @@ enum class OuraSleepStage(val raw: Int) {
     }
 }
 
-/** One decoded sleep-phase code in order within a 0x4E/0x5A record (OURA_PROTOCOL.md s6.12). */
+/** One decoded sleep-phase code in order within a 0x4B/0x4E/0x5A record (OURA_PROTOCOL.md s6.12). */
 data class OuraSleepPhase(val ringTimestamp: Long, val index: Int, val stage: OuraSleepStage)
 
 /** Motion state (OURA_PROTOCOL.md s6.13): 0 NO_MOTION, 1 RESTLESS, 2 TOSSING, 3 ACTIVE. */

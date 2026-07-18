@@ -117,12 +117,27 @@ final class DecoderGoldenTests: XCTestCase {
     // MARK: - 0x4E sleep phase (2-bit codes MSB-first; header byte skipped)
 
     func testSleepPhase0x4E() {
-        // header 0x00, phase byte 0x6C = bits 01 10 11 00 -> light, deep, rem, awake.
+        // header 0x00, phase byte 0x6C = bits 01 10 11 00 -> light, rem, awake, deep
+        // (codes 0=deep, 1=light, 2=rem, 3=awake per the native SleepPhase_OSSAv1 enum).
         let rec = record("4e0602000100006c")
         let phases = OuraDecoders.decodeSleepPhase(rec)
         XCTAssertEqual(phases, [
             OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .light),
-            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .deep),
+            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .rem),
+            OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .awake),
+            OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .deep),
+        ])
+    }
+
+    // MARK: - 0x4B sleep phase information (same 2-bit decoder as 0x4E/0x5A)
+
+    func testSleepPhase0x4B() {
+        // header 0x00, phase byte 0x1B = bits 00 01 10 11 -> deep, light, rem, awake.
+        let rec = record("4b0602000100001b")
+        let phases = OuraDecoders.decodeSleepPhase(rec)
+        XCTAssertEqual(phases, [
+            OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep),
+            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light),
             OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem),
             OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake),
         ])

@@ -388,7 +388,7 @@ class OuraDriver(
                 emptyList()
 
             // --- Tier A: Sleep phase (2-bit codes are verified) ---
-            OuraEventTag.SLEEP_PHASE, OuraEventTag.SLEEP_PHASE_ALT ->
+            OuraEventTag.SLEEP_PHASE_INFO, OuraEventTag.SLEEP_PHASE, OuraEventTag.SLEEP_PHASE_ALT ->
                 (OuraDecoders.decodeSleepPhase(record) ?: emptyList()).map { OuraEvent.SleepPhaseEvent(it) }
 
             // --- Tier A: Lifecycle / state / time ---
@@ -424,7 +424,7 @@ class OuraDriver(
                 emptyList()
 
             // --- Tier B (only reached when allowTierB == true; otherwise dropped above) ---
-            OuraEventTag.SLEEP_SUMMARY_1, OuraEventTag.SLEEP_SUMMARY_B, OuraEventTag.SLEEP_SUMMARY_C,
+            OuraEventTag.SLEEP_SUMMARY_1, OuraEventTag.SLEEP_SUMMARY_C,
             OuraEventTag.SLEEP_SUMMARY_D, OuraEventTag.SLEEP_SUMMARY_E, OuraEventTag.SLEEP_SUMMARY_F ->
                 listOf(
                     OuraEvent.TierB(

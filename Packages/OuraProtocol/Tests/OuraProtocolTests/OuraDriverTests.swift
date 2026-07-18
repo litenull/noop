@@ -271,6 +271,22 @@ final class OuraDriverTests: XCTestCase {
         XCTAssertEqual(events, [.spo2(OuraSpO2(ringTimestamp: rt, value: 970))])
     }
 
+    func testIngestDecodesSleepPhaseInfoAsTierA() {
+        let tag = OuraEventTag.sleepPhaseInfo
+        XCTAssertEqual(tag.rawValue, 0x4B)
+        XCTAssertEqual(tag.tier, .tierA)
+        XCTAssertEqual(tag.name, "SLEEP_PHASE_INFO")
+
+        let d = OuraDriver(ringGen: .gen3, authKey: key)
+        let rec = OuraFraming.parseRecord(bytes("4b0602000100001b"))!
+        XCTAssertEqual(d.ingest(record: rec), [
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake)),
+        ])
+    }
+
     func testIngestUnknownTagYieldsNothing() {
         let d = OuraDriver(ringGen: .gen3, authKey: key)
         // 0x99 is not in the dictionary -> [] (never a guessed value).

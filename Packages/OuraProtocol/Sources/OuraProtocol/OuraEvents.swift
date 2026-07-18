@@ -73,15 +73,18 @@ public struct OuraBattery: Equatable, Sendable, Codable {
     }
 }
 
-/// Sleep phase code (OURA_PROTOCOL.md s6.12): 2-bit codes 0=awake, 1=light, 2=deep, 3=REM.
+/// Sleep phase code (OURA_PROTOCOL.md s6.12): 2-bit codes 0=deep, 1=light, 2=REM, 3=awake.
+/// Mapping per the native `SleepPhase_OSSAv1` enum ([oura-rs]) and the cloud-API
+/// hypnogram order (1=deep, 2=light, 3=REM, 4=awake); an earlier 0=awake reading was
+/// wrong and flipped deep/awake + REM/deep.
 public enum OuraSleepStage: Int, Sendable, Equatable, Codable {
-    case awake = 0
+    case deep = 0
     case light = 1
-    case deep = 2
-    case rem = 3
+    case rem = 2
+    case awake = 3
 }
 
-/// One decoded sleep-phase code in order within a 0x4E/0x5A record (OURA_PROTOCOL.md s6.12).
+/// One decoded sleep-phase code in order within a 0x4B/0x4E/0x5A record (OURA_PROTOCOL.md s6.12).
 public struct OuraSleepPhase: Equatable, Sendable, Codable {
     public let ringTimestamp: UInt32
     public let index: Int          // position within the record's phase sequence

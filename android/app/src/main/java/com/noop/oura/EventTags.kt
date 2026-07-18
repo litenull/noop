@@ -57,13 +57,13 @@ enum class OuraEventTag(val raw: Int) {
 
     // --- Sleep summaries (Tier B, UNVERIFIED) ---
     SLEEP_SUMMARY_1(0x49),    // sleep_summary_1, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
-    SLEEP_SUMMARY_B(0x4B),    // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     SLEEP_SUMMARY_C(0x4C),    // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     SLEEP_SUMMARY_D(0x4F),    // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     SLEEP_SUMMARY_E(0x57),    // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
     SLEEP_SUMMARY_F(0x58),    // sleep summary variant, OURA_PROTOCOL.md s6.12 (UNVERIFIED)
 
     // --- Sleep phase codes (Tier A: 2-bit phase codes are byte-for-byte verified) ---
+    SLEEP_PHASE_INFO(0x4B),   // sleep_phase_information (2-bit codes), [oura-rs] native parser
     SLEEP_PHASE(0x4E),        // sleep_phase_details (2-bit codes), OURA_PROTOCOL.md s6.12
     SLEEP_PHASE_ALT(0x5A),    // sleep_phase_details alias, OURA_PROTOCOL.md s6.12
 
@@ -85,7 +85,7 @@ enum class OuraEventTag(val raw: Int) {
      */
     val tier: TrustTier
         get() = when (this) {
-            SLEEP_SUMMARY_1, SLEEP_SUMMARY_B, SLEEP_SUMMARY_C, SLEEP_SUMMARY_D, SLEEP_SUMMARY_E,
+            SLEEP_SUMMARY_1, SLEEP_SUMMARY_C, SLEEP_SUMMARY_D, SLEEP_SUMMARY_E,
             SLEEP_SUMMARY_F, ACTIVITY_INFO, ACTIVITY_SUMMARY_1, ACTIVITY_SUMMARY_2,
             REAL_STEPS_1, REAL_STEPS_2, SPO2_SMOOTHED -> TrustTier.TIER_B
             else -> TrustTier.TIER_A
@@ -115,11 +115,11 @@ enum class OuraEventTag(val raw: Int) {
             MOTION -> "MOTION"
             MOTION_PERIOD -> "MOTION_PERIOD"
             SLEEP_SUMMARY_1 -> "SLEEP_SUMMARY_1"
-            SLEEP_SUMMARY_B -> "SLEEP_SUMMARY_4B"
             SLEEP_SUMMARY_C -> "SLEEP_SUMMARY_4C"
             SLEEP_SUMMARY_D -> "SLEEP_SUMMARY_4F"
             SLEEP_SUMMARY_E -> "SLEEP_SUMMARY_57"
             SLEEP_SUMMARY_F -> "SLEEP_SUMMARY_58"
+            SLEEP_PHASE_INFO -> "SLEEP_PHASE_INFO"
             SLEEP_PHASE -> "SLEEP_PHASE"
             SLEEP_PHASE_ALT -> "SLEEP_PHASE_ALT"
             ACTIVITY_INFO -> "ACTIVITY_INFO"
