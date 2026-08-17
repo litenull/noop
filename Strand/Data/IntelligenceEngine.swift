@@ -991,6 +991,32 @@ final class IntelligenceEngine: ObservableObject {
             ], deviceId: computedId)
         }
 
+        // ── Metabolic Signal (insulin-friendly recovery pattern) , DAILY, keyed to newestDay ────────
+        // Roll the SAME last-7 window into a 0–100 literature-anchored composite of how insulin-
+        // friendly the user's recovery patterns look (deep-sleep share, duration, nocturnal HRV vs
+        // age norm, RHR, activity). Inputs are 7-day MEDIANS so one bad night can't swing the
+        // daily-stamped score. Engine = MetabolicSignalEngine (StrandAnalytics), fully unit-tested.
+        // Honest-data framing: a PATTERN readout, never a claim of measuring insulin resistance
+        // (that needs fasting labs) — see docs/METABOLIC_SIGNAL.md. Idempotent per day, like steps_est.
+        let mSleepHours = fa7.compactMap { $0.totalSleepMin }.map { $0 / 60.0 }.filter { $0 > 0 }
+        let mDeepShares = fa7.compactMap { d -> Double? in
+            guard let total = d.totalSleepMin, let deep = d.deepMin, total > 0, deep > 0 else { return nil }
+            return deep / total
+        }
+        let mHrvs = fa7.compactMap { $0.avgHrv }.filter { $0 > 0 }
+        if let mRes = MetabolicSignalEngine.compute(MetabolicSignalEngine.Inputs(
+                age: Double(profile.age),
+                sleepHours: mSleepHours.isEmpty ? nil : IntelligenceEngine.medianOf(mSleepHours),
+                deepSleepShare: mDeepShares.isEmpty ? nil : IntelligenceEngine.medianOf(mDeepShares),
+                rmssd: mHrvs.isEmpty ? nil : IntelligenceEngine.medianOf(mHrvs),
+                restingHR: faRHRs.isEmpty ? nil : IntelligenceEngine.medianOf(faRHRs),
+                paIndex: FitnessAgeEngine.physicalActivityIndexFromStrain(
+                    activeDaysPerWeek: faActiveStrains.count, meanActiveStrain: faMeanActiveStrain))) {
+            _ = try? await store.upsertMetricSeries(
+                [MetricPoint(day: newestDay, key: "metabolic_signal", value: mRes.score)],
+                deviceId: computedId)
+        }
+
         // ── Steps ESTIMATE (WHOOP 4.0) , DAILY, keyed to each strap-only day ────────────────────────
         // A WHOOP 4.0 sends no step count over BLE, so for days the phone DIDN'T also count steps we
         // estimate them: calibrate the strap's daily MOTION VOLUME against the phone's real step count

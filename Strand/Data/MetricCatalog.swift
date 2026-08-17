@@ -159,6 +159,11 @@ enum MetricCatalog {
         d("lean_mass", String(localized: "Lean Body Mass"), "Health", "kg", "apple-health", "figure.arms.open", 1, true),
         d("bmi", "BMI", "Health", "", "apple-health", "figure", 1, nil),
         d("stress", String(localized: "Day Stress"), "Health", "/3", "my-whoop", "gauge.with.dots.needle.50percent", 1, false),
+        // Literature-anchored 0–100 composite of how insulin-friendly the recovery pattern looks
+        // (deep sleep, duration, HRV-vs-age-norm, RHR, activity), computed daily on-device over a
+        // rolling 7-day median window. A pattern readout — never a measurement of insulin resistance.
+        d("metabolic_signal", String(localized: "Metabolic Signal"), "Health", "/100", "my-whoop", "bolt.fill", 0, true,
+          String(localized: "How insulin-friendly your recovery patterns look: deep sleep, duration, nightly HRV, resting HR, activity. On-device pattern readout — not a measurement.")),
 
         // ── Nutrition (imported from a food-tracker CSV: calories-in alongside calories-out)
         d("calories_in", String(localized: "Calories In"), "Nutrition", "kcal", "nutrition-csv", "fork.knife", 0, nil),

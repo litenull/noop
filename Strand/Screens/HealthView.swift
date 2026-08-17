@@ -72,6 +72,9 @@ private struct HealthSectionsStack: View {
             // Vitality / Body Age (weekly, computed by IntelligenceEngine from the mortality-
             // hazard model). Its own view depending only on repo/profile.
             VitalitySection()
+            // Metabolic Signal (daily, computed by IntelligenceEngine from the literature-anchored
+            // insulin-sensitivity composite). Its own view depending only on repo/profile.
+            MetabolicSignalSection()
             // Screen-5 recovery detail: the CONTRIBUTORS to today's recovery as
             // labelled progress bars (HRV / Resting HR / Sleep / Respiratory), each
             // scored against the on-device baseline. Depends only on `repo`.
@@ -1113,6 +1116,364 @@ private struct VitalitySection: View {
         vitality = (await repo.exploreSeries(key: "vitality", source: "my-whoop")).last?.value
         bodyAge = (await repo.exploreSeries(key: "body_age", source: "my-whoop")).last?.value
         loaded = true
+    }
+}
+
+// MARK: - Metabolic Signal
+
+/// The "Metabolic Signal" section: a daily, on-device 0–100 read of how insulin-friendly the user's
+/// recovery patterns look (deep-sleep share, duration, nightly HRV vs age norm, RHR, activity),
+/// computed by IntelligenceEngine from MetabolicSignalEngine and read back from the
+/// "metabolic_signal" metricSeries. Same leaf-view discipline as FitnessAgeSection: depends only on
+/// `repo`/`profile`, so the ~1 Hz live HR stream never re-renders it.
+///
+/// HONEST FRAMING (mirrors the engine doc): a PATTERN readout against published anchors — it never
+/// names or measures a condition. Measuring insulin resistance needs fasting labs no wearable can
+/// do, so the copy stays at "how insulin-friendly your patterns look".
+///   • a value exists → hero score + level line + best/worst drivers + not-a-measurement caption,
+///     tappable through to the metric trend, with the "ⓘ How accurate is this?" readiness disclosure;
+///   • no value yet → the checklist card directly, required-missing inputs deep-linking to Settings.
+private struct MetabolicSignalSection: View {
+    @EnvironmentObject var repo: Repository
+    @EnvironmentObject var profile: ProfileStore
+
+    /// Latest daily Metabolic Signal (0–100), nil until loaded/computed.
+    @State private var signal: Double?
+    @State private var loaded = false
+    /// Reveal the readiness checklist (the "ⓘ How accurate is this?" disclosure under a shown value).
+    @State private var showReadiness = false
+
+    /// The two drill-downs this section can present, ONE enum-driven sheet (two stacked `.sheet`
+    /// modifiers race on macOS — see FitnessAgeSection).
+    private enum MetabolicSheet: String, Identifiable {
+        case trend, settings
+        var id: String { rawValue }
+    }
+    @State private var metabolicSheet: MetabolicSheet?
+
+    /// The catalog descriptor backing the trend sheet.
+    private var metric: MetricDescriptor? { MetricCatalog.all.first { $0.key == "metabolic_signal" } }
+
+    /// Rebuild the engine result from the same last-7 window IntelligenceEngine rolls (identical
+    /// medians/statistics), so the "what's driving it" breakdown reconciles with the stored headline
+    /// instead of being recomputed on different numbers (the VitalitySection rule).
+    private var result: MetabolicSignalEngine.Result? {
+        let last7 = repo.days.suffix(7)
+        let hours = last7.compactMap { $0.totalSleepMin }.map { $0 / 60.0 }.filter { $0 > 0 }
+        let shares = last7.compactMap { d -> Double? in
+            guard let t = d.totalSleepMin, let deep = d.deepMin, t > 0, deep > 0 else { return nil }
+            return deep / t
+        }
+        let hrvs = last7.compactMap { $0.avgHrv }.filter { $0 > 0 }
+        let rhrs = last7.compactMap { $0.restingHr }.map(Double.init)
+        let activeStrains = last7.compactMap { $0.strain }.filter { $0 >= 30 }
+        let meanActiveStrain = activeStrains.isEmpty ? 0
+            : activeStrains.reduce(0, +) / Double(activeStrains.count)
+        return MetabolicSignalEngine.compute(.init(
+            age: Double(profile.age),
+            sleepHours: hours.isEmpty ? nil : IntelligenceEngine.medianOf(hours),
+            deepSleepShare: shares.isEmpty ? nil : IntelligenceEngine.medianOf(shares),
+            rmssd: hrvs.isEmpty ? nil : IntelligenceEngine.medianOf(hrvs),
+            restingHR: rhrs.isEmpty ? nil : IntelligenceEngine.medianOf(rhrs),
+            paIndex: FitnessAgeEngine.physicalActivityIndexFromStrain(
+                activeDaysPerWeek: activeStrains.count, meanActiveStrain: meanActiveStrain)))
+    }
+
+    /// Build the readiness verdict from the same signals IntelligenceEngine feeds the engine.
+    /// Nights with BOTH a sleep time and a stage breakdown are the required core — the deep-share
+    /// factor needs both.
+    private var readiness: MetabolicReadiness {
+        let last7 = repo.days.suffix(7)
+        return MetabolicSignalEngine.assessReadiness(
+            hasAge: profile.age > 0,
+            sleepStageNights: last7.filter { ($0.totalSleepMin ?? 0) > 0 && ($0.deepMin ?? 0) > 0 }.count,
+            hrvNights: last7.compactMap { $0.avgHrv }.count,
+            rhrNights: last7.compactMap { $0.restingHr }.count,
+            activityDays: last7.compactMap { $0.strain }.count)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: NoopMetrics.gap) {
+            SectionHeader("Metabolic Signal", overline: "Daily",
+                          trailing: signal != nil ? String(localized: "7-day pattern") : nil)
+            content
+        }
+        .sheet(item: $metabolicSheet) { which in
+            NavigationStack {
+                switch which {
+                case .trend:
+                    if let m = metric { MetricDetailView(metric: m) }
+                case .settings:
+                    SettingsView()
+                }
+            }
+            #if os(macOS)
+            .frame(width: 900, height: 820)
+            #endif
+        }
+        .task(id: repo.refreshSeq) { await load() }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let score = signal {
+            heroCard(score: score)
+            if showReadiness {
+                MetabolicChecklistCard(readiness: readiness,
+                                       lead: nil,
+                                       onFix: { metabolicSheet = .settings })
+                    .transition(.opacity)
+            }
+        } else if loaded {
+            // No value yet: lead with the checklist so the user sees exactly what's still needed.
+            MetabolicChecklistCard(
+                readiness: readiness,
+                lead: readiness.canCompute
+                    ? "A few more days and we can show your Metabolic Signal."
+                    : "A few more days of sleep data, plus the basics below, and we can show your Metabolic Signal.",
+                onFix: { metabolicSheet = .settings })
+        } else {
+            // Brief read of the daily value; honest placeholder rather than an empty gap.
+            ComingSoon(what: "Reading your Metabolic Signal…", symbol: "bolt.fill")
+        }
+    }
+
+    /// The level line under the hero: whole phrases per level, so translators get complete
+    /// sentences (never a stitched fragment).
+    private func levelLine(_ level: MetabolicSignalEngine.Level) -> String {
+        switch level {
+        case .favorable: return String(localized: "Patterns look insulin-friendly")
+        case .steady:    return String(localized: "Mixed — some room to improve")
+        case .watch:     return String(localized: "Several signals deserve attention")
+        }
+    }
+
+    /// Caller-side factor labels (the engine exposes keys only, mirroring IllnessSignalEngine's
+    /// firedLabels contract — locale stays out of the pure engine).
+    private func factorLabel(_ key: String) -> String {
+        switch key {
+        case "deepSleep":    return String(localized: "Deep sleep")
+        case "sleepDuration": return String(localized: "Sleep duration")
+        case "hrv":          return String(localized: "Nightly HRV")
+        case "restingHR":    return String(localized: "Resting heart rate")
+        case "activity":     return String(localized: "Activity")
+        default:             return key
+        }
+    }
+
+    /// The shown-value hero: liquid gauge filled to the score, level line, the best/worst factor
+    /// drivers, the honest caption, and the two affordances (trend tap-through + accuracy
+    /// disclosure). FitnessAgeSection idiom on the cyan metric tint to stand apart from the
+    /// Charge-green Fitness Age / Vitality cards.
+    private func heroCard(score: Double) -> some View {
+        let level = MetabolicSignalEngine.level(forScore: score)
+        let levelColor: Color = level == .favorable ? StrandPalette.statusPositive
+            : (level == .watch ? StrandPalette.statusWarning : StrandPalette.textSecondary)
+        // Drivers from the reconciled per-factor sub-scores; only surfaced when they actually
+        // diverge (a flat week has no "driver").
+        let sorted = result?.contributions.sorted { $0.subScore < $1.subScore }
+        let worst = sorted?.first
+        let best = sorted?.last
+        let diverged = (best?.subScore ?? 100) - (worst?.subScore ?? 0) >= 20
+        let shown = Int(score.rounded())
+        return VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+            // Tap the hero body to open the full "metabolic_signal" trend.
+            Button { metabolicSheet = .trend } label: {
+                HStack(alignment: .center, spacing: NoopMetrics.space5) {
+                    ZStack {
+                        LiquidVessel(value: max(0, min(1, score / 100)),
+                                     tint: StrandPalette.metricCyan, animated: true)
+                            .frame(width: 96, height: 96)
+                        CountUpNumber(value: score, font: StrandFont.rounded(30))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.5), radius: 6, y: 1)
+                            .allowsHitTesting(false)
+                    }
+                    VStack(alignment: .leading, spacing: NoopMetrics.space1) {
+                        Text("Metabolic Signal").strandOverline()
+                        Text(levelLine(level))
+                            .font(StrandFont.subhead)
+                            .foregroundStyle(levelColor)
+                        Text("of 100")
+                            .font(StrandFont.footnote)
+                            .foregroundStyle(StrandPalette.textTertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(LiquidPressStyle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Metabolic Signal \(shown) out of 100. \(levelLine(level)). Tap to see the trend.")
+
+            if diverged, let best, let worst {
+                Divider().overlay(StrandPalette.hairline)
+                if best.subScore >= 70 {
+                    Text("Helping most: \(factorLabel(best.key))")
+                        .font(StrandFont.footnote).foregroundStyle(StrandPalette.statusPositive)
+                }
+                if worst.subScore <= 50 {
+                    Text("Holding you back: \(factorLabel(worst.key))")
+                        .font(StrandFont.footnote).foregroundStyle(StrandPalette.statusWarning)
+                }
+            }
+
+            Text("How insulin-friendly your recovery patterns look — from sleep, HRV and activity. It shows patterns, not insulin resistance (that takes lab tests).")
+                .font(StrandFont.footnote)
+                .foregroundStyle(StrandPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(StrandPalette.hairline)
+
+            // The honest disclosure: what we have / what we still need.
+            Button {
+                withAnimation(StrandMotion.interactive) { showReadiness.toggle() }
+            } label: {
+                HStack(spacing: NoopMetrics.space2) {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(StrandPalette.accent)
+                        .accessibilityHidden(true)
+                    Text("How accurate is this?")
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textPrimary)
+                    Spacer()
+                    Image(systemName: showReadiness ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(StrandPalette.textTertiary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(LiquidPressStyle())
+            // Whole-string key per variant (never a stitched Hide/Show fragment).
+            .accessibilityLabel(showReadiness
+                ? "How accurate is this? Hide the data behind your Metabolic Signal"
+                : "How accurate is this? Show the data behind your Metabolic Signal")
+        }
+        .padding(NoopMetrics.space5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            FrostedCardSurface(tint: StrandPalette.metricCyan, cornerRadius: NoopMetrics.cardRadius)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: NoopMetrics.cardRadius, style: .continuous))
+    }
+
+    /// Load the latest daily Metabolic Signal from the metricSeries — same `exploreSeries` path
+    /// every other metric on this screen reads, source "my-whoop" (the Repository merges the
+    /// computed "-noop" rows under any real import). Takes the freshest point.
+    private func load() async {
+        signal = (await repo.exploreSeries(key: "metabolic_signal", source: "my-whoop")).last?.value
+        loaded = true
+    }
+}
+
+/// The metabolic readiness checklist card: an optional lead line, then the engine's `items` as
+/// ✓/⚠/○ rows with their `detail` text (flat — no role grouping; every optional factor merely
+/// deepens the read). A required-but-missing age shows a "Fix in Settings" affordance; coverage
+/// factors can only be earned by wearing the device. ReadinessChecklistCard idiom.
+private struct MetabolicChecklistCard: View {
+    let readiness: MetabolicReadiness
+    /// Optional intro line shown above the rows (e.g. the "a few more days" no-value message).
+    let lead: LocalizedStringKey?
+    /// Invoked when the user taps a required-missing row's "Fix in Settings".
+    let onFix: () -> Void
+
+    var body: some View {
+        NoopCard(tint: StrandPalette.metricCyan) {
+            VStack(alignment: .leading, spacing: NoopMetrics.space4) {
+                HStack(spacing: NoopMetrics.rowSpacing) {
+                    confidencePill
+                    Spacer(minLength: 0)
+                }
+                if let lead {
+                    Text(lead)
+                        .font(StrandFont.subhead)
+                        .foregroundStyle(StrandPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(alignment: .leading, spacing: NoopMetrics.rowSpacing) {
+                    ForEach(readiness.items, id: \.key) { item in
+                        readinessRow(item)
+                    }
+                }
+                Text("Built from published research on sleep, HRV and insulin sensitivity (Tasali 2008; Spiegel 1999; Saito 2015; ARIC). A pattern readout — not a diagnosis, and it cannot measure insulin resistance.")
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The overall confidence chip, mapped onto the existing score-lifecycle pill vocabulary.
+    @ViewBuilder private var confidencePill: some View {
+        switch readiness.confidence {
+        case .ready:    ScoreStatePill(.solid, text: "Ready")
+        case .estimate: ScoreStatePill(.building, text: "Estimate (partial data)")
+        case .notReady: ScoreStatePill(.calibrating, text: "Not enough data yet")
+        }
+    }
+
+    @ViewBuilder
+    private func readinessRow(_ item: MetabolicReadinessItem) -> some View {
+        // Only age is fixable in Settings; every coverage factor is earned by wearing the device.
+        let fixable = item.status != .satisfied && item.key == "age"
+        let row = HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: statusIcon(item.status))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(statusColor(item.status))
+                .frame(width: 18)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.label)
+                    .font(StrandFont.body)
+                    .foregroundStyle(StrandPalette.textPrimary)
+                Text(item.detail)
+                    .font(StrandFont.footnote)
+                    .foregroundStyle(StrandPalette.textTertiary)
+            }
+            Spacer(minLength: 0)
+            if fixable {
+                Button(action: onFix) {
+                    Text("Fix in Settings")
+                        .font(StrandFont.footnote.weight(.semibold))
+                        .foregroundStyle(StrandPalette.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(item.label): \(item.detail). Fix in Settings.")
+            }
+        }
+        if fixable {
+            row.accessibilityElement(children: .contain)
+        } else {
+            row
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(item.label), \(statusWord(item.status)). \(item.detail)")
+        }
+    }
+
+    private func statusIcon(_ s: MetabolicReadinessStatus) -> String {
+        switch s {
+        case .satisfied: return "checkmark.circle.fill"
+        case .partial:   return "exclamationmark.triangle.fill"
+        case .missing:   return "circle"
+        }
+    }
+    private func statusColor(_ s: MetabolicReadinessStatus) -> Color {
+        switch s {
+        case .satisfied: return StrandPalette.statusPositive
+        case .partial:   return StrandPalette.statusWarning
+        case .missing:   return StrandPalette.textTertiary
+        }
+    }
+    private func statusWord(_ s: MetabolicReadinessStatus) -> String {
+        switch s {
+        case .satisfied: return String(localized: "ready")
+        case .partial:   return String(localized: "partial")
+        case .missing:   return String(localized: "missing")
+        }
     }
 }
 
