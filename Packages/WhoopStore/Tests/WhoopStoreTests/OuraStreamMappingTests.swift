@@ -84,25 +84,74 @@ final class OuraStreamMappingTests: XCTestCase {
         XCTAssertEqual(s.skinTemp[0].ts, ts)
     }
 
+    func testSleepTempBatchSpreadsBackwardFromRecordTs() {
+        // 0x75 sleep-temp: a batch of 3 samples at the VERIFIED 30 s spacing — the last sample sits at
+        // the record time, earlier samples walk backward (s6.8). Centi-°C raw preserved per sample.
+        let s = OuraStreamMapping.streams(from: [
+            .temp(OuraTemp(ringTimestamp: 100, celsius: 34.10, index: 0, countInRecord: 3,
+                           sampleIntervalSeconds: 30)),
+            .temp(OuraTemp(ringTimestamp: 100, celsius: 34.20, index: 1, countInRecord: 3,
+                           sampleIntervalSeconds: 30)),
+            .temp(OuraTemp(ringTimestamp: 100, celsius: 34.30, index: 2, countInRecord: 3,
+                           sampleIntervalSeconds: 30)),
+        ], at: ts)
+        XCTAssertEqual(s.skinTemp.map { $0.ts }, [ts - 60, ts - 30, ts])
+        XCTAssertEqual(s.skinTemp.map { $0.raw }, [3410, 3420, 3430])
+    }
+
+    func testUnspacedTempBatchStaysAtRecordTs() {
+        // A batched temp record whose spacing is UNVERIFIED (0x46: interval nil) must NOT be spread on
+        // a guess — every sample stays at the record time (honest-data invariant; OURA_PROTOCOL s6.8).
+        let s = OuraStreamMapping.streams(from: [
+            .temp(OuraTemp(ringTimestamp: 100, celsius: 34.10, index: 0, countInRecord: 2,
+                           sampleIntervalSeconds: nil)),
+            .temp(OuraTemp(ringTimestamp: 100, celsius: 34.20, index: 1, countInRecord: 2,
+                           sampleIntervalSeconds: nil)),
+        ], at: ts)
+        XCTAssertEqual(s.skinTemp.map { $0.ts }, [ts, ts])
+    }
+
     // MARK: - Sleep phase -> events[OURA_SLEEP_PHASE] + sleepState
 
     func testSleepPhaseMapsToEventAndSleepStateWithFiveMinuteEpochs() {
         // Codes per the native SleepPhase_OSSAv1 enum: deep=0, light=1, rem=2, awake=3.
+        // BATCH PLACEMENT: the record time anchors the LAST phase; earlier phases walk BACKWARD one
+        // 5-minute epoch each (batched-event convention, s6.12) — 3 phases land at ts−600, ts−300, ts.
         let s = OuraStreamMapping.streams(from: [
-            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 0, stage: .deep)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 1, stage: .rem)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 2, stage: .awake)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 0, stage: .deep, countInRecord: 3)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 1, stage: .rem, countInRecord: 3)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 2, stage: .awake, countInRecord: 3)),
         ], at: ts)
         XCTAssertEqual(s.events.count, 3)
         XCTAssertTrue(s.events.allSatisfy { $0.kind == OuraStreamMapping.sleepPhaseEventKind })
         XCTAssertEqual(s.events.map { $0.payload["phase"] }, [.int(0), .int(2), .int(3)])
         XCTAssertEqual(s.events.map { $0.payload["index"] }, [.int(0), .int(1), .int(2)])
-        XCTAssertEqual(s.events.map { $0.ts }, [ts, ts + 300, ts + 600])
+        XCTAssertEqual(s.events.map { $0.ts }, [ts - 600, ts - 300, ts])
         XCTAssertEqual(s.sleepState, [
-            SleepStateSample(ts: ts, state: 2),
-            SleepStateSample(ts: ts + 300, state: 2),
-            SleepStateSample(ts: ts + 600, state: 0),
+            SleepStateSample(ts: ts - 600, state: 2),
+            SleepStateSample(ts: ts - 300, state: 2),
+            SleepStateSample(ts: ts, state: 0),
         ])
+    }
+
+    func testSleepPhaseSinglePhaseRecordAnchorsAtRecordTs() {
+        // A single-phase record (count 1): backward walk of (1-1-0)=0 -> the phase sits at ts itself.
+        let s = OuraStreamMapping.streams(from: [
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 0, stage: .light, countInRecord: 1)),
+        ], at: ts)
+        XCTAssertEqual(s.events.map { $0.ts }, [ts])
+        XCTAssertEqual(s.sleepState.map { $0.state }, [2])
+    }
+
+    func testSleepPhaseEventPayloadStaysWireFacts() {
+        // The persisted payload carries the raw wire code + index only (no count/derived values), so
+        // history re-materialization re-derives placement without an event-table migration.
+        let s = OuraStreamMapping.streams(from: [
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 100, index: 1, stage: .rem, countInRecord: 2)),
+        ], at: ts)
+        XCTAssertEqual(s.events[0].payload["phase"], .int(2))
+        XCTAssertEqual(s.events[0].payload["index"], .int(1))
+        XCTAssertNil(s.events[0].payload["count"])
     }
 
     // MARK: - Battery -> battery:[BatterySample]
@@ -158,7 +207,7 @@ final class OuraStreamMappingTests: XCTestCase {
             .hrv(OuraHRV(ringTimestamp: 1, timeMs: 0, b1: 40, b2: 1)),
             .spo2(OuraSpO2(ringTimestamp: 1, value: 965)),
             .temp(OuraTemp(ringTimestamp: 1, celsius: 34.0)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: 1, index: 0, stage: .light)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: 1, index: 0, stage: .light, countInRecord: 1)),
             .battery(OuraBattery(percent: 88)),
         ], at: ts)
         XCTAssertEqual(s.hr.count, 1)

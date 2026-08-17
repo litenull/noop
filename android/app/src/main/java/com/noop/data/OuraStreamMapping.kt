@@ -39,7 +39,7 @@ object OuraStreamMapping {
     /** The event `kind` recorded for the ring's own open sleep-phase (0x4B/0x4E/0x5A) tags. */
     const val EVENT_SLEEP_PHASE = "OURA_SLEEP_PHASE"
 
-    /** Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0. */
+    /** Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors the record's LAST phase; earlier phases walk backward (s6.12). */
     const val SLEEP_PHASE_EPOCH_SECONDS = 5 * 60
 
     /**
@@ -95,10 +95,22 @@ object OuraStreamMapping {
                     // reader divides by), so persist celsius * 100 and tag the unit. PARITY: the Swift
                     // twin stores the IDENTICAL celsius * 100, so the same decoded celsius yields the same
                     // raw integer on both platforms.
+                    //
+                    // BATCH PLACEMENT (s6.8): a batched record's samples share one event time; their
+                    // true times walk BACKWARD from it by the record's spacing. Only the 0x75
+                    // sleep-temp decoder sets a VERIFIED spacing (30 s) — those samples spread
+                    // backward. The 0x46 temp_event's batch cadence is unverified (interval null), so
+                    // its samples stay at the record time (no guessed placement).
                     val ts = anchor(ev.value.ringTimestamp) ?: continue
+                    val interval = ev.value.sampleIntervalSeconds
+                    val sampleTs = if (interval != null && interval > 0 && ev.value.countInRecord > 1) {
+                        ts - (ev.value.countInRecord - 1 - ev.value.index) * interval
+                    } else {
+                        ts
+                    }
                     out.skinTemp.add(
                         SkinTempSample(
-                            ts = ts,
+                            ts = sampleTs,
                             raw = Math.round(ev.value.celsius * 100.0).toInt(),
                             unit = "centi_c",
                         ),
@@ -106,8 +118,14 @@ object OuraStreamMapping {
                 }
 
                 is OuraEvent.SleepPhaseEvent -> {
+                    // BATCH PLACEMENT (s6.12): the record's phases share one event time; the LAST
+                    // phase sits at the record time and earlier phases step BACKWARD one 5-minute
+                    // epoch each — the batched-event convention OURA_PROTOCOL.md documents for IBI
+                    // (s6.1), sleep-temp (s6.8) and HRV (s6.9). The old forward walk
+                    // (ts + index·300) contradicted that convention and mis-timed every record's
+                    // epochs (n−1) epochs late. Mirrors the Swift twin exactly.
                     val ts = anchor(ev.value.ringTimestamp) ?: continue
-                    val sampleTs = ts + ev.value.index * SLEEP_PHASE_EPOCH_SECONDS
+                    val sampleTs = ts - (ev.value.countInRecord - 1 - ev.value.index) * SLEEP_PHASE_EPOCH_SECONDS
                     out.events.add(
                         WhoopEvent(
                             ts = sampleTs,

@@ -247,7 +247,8 @@ public enum OuraDecoders {
     }
 
     /// Decode the 0x75 sleep_temp_event: uint16 LE / 100 = C, 30-second spacing. Per OURA_PROTOCOL.md
-    /// s6.8. Returns nil on a short/odd body.
+    /// s6.8. Returns nil on a short/odd body. Each sample carries its position/count plus the VERIFIED
+    /// 30 s spacing so the mapping can walk timestamps BACKWARD from the event UTC (s6.8).
     public static func decodeSleepTemp(_ rec: OuraRecord) -> [OuraTemp]? {
         let b = rec.payload
         guard b.count >= 2, b.count % 2 == 0 else { return nil }
@@ -255,10 +256,16 @@ public enum OuraDecoders {
         var i = 0
         while i + 1 < b.count {
             let c = Double(u16le(b, i)) / 100.0       // unsigned for sleep temp
-            out.append(OuraTemp(ringTimestamp: rec.ringTimestamp, celsius: c))
+            out.append(OuraTemp(ringTimestamp: rec.ringTimestamp, celsius: c,
+                                index: out.count, countInRecord: 0, sampleIntervalSeconds: 30))
             i += 2
         }
-        return out.isEmpty ? nil : out
+        guard !out.isEmpty else { return nil }
+        let count = out.count
+        return out.map { t in
+            OuraTemp(ringTimestamp: t.ringTimestamp, celsius: t.celsius, index: t.index,
+                     countInRecord: count, sampleIntervalSeconds: t.sampleIntervalSeconds)
+        }
     }
 
     // MARK: - Battery (0x0D outer response; s6.10)
@@ -333,7 +340,9 @@ public enum OuraDecoders {
     /// Decode the 0x4B/0x4E/0x5A sleep_phase records: byte6 = header; phase codes are 2-bit, 4 per byte
     /// (bits [7:6][5:4][3:2][1:0]); codes 0=deep,1=light,2=REM,3=awake (native `SleepPhase_OSSAv1` enum
     /// / cloud-API hypnogram order; an earlier 0=awake reading was wrong). Per OURA_PROTOCOL.md s6.12.
-    /// Returns nil on a short body. The header byte is skipped; phase bytes follow.
+    /// Returns nil on a short body. The header byte is skipped; phase bytes follow. The record is a
+    /// BATCH: every phase carries `countInRecord` so the mapping can walk epochs BACKWARD from the
+    /// record time (last phase = record time) per the protocol's batched-event convention.
     public static func decodeSleepPhase(_ rec: OuraRecord) -> [OuraSleepPhase]? {
         let b = rec.payload
         // body[0] is the header (spec offset 6); phase codes begin at body[1].
@@ -346,12 +355,20 @@ public enum OuraDecoders {
             for shift in stride(from: 6, through: 0, by: -2) {
                 let code = Int((byte >> UInt8(shift)) & 0x03)
                 if let stage = OuraSleepStage(rawValue: code) {
-                    out.append(OuraSleepPhase(ringTimestamp: rec.ringTimestamp, index: index, stage: stage))
+                    out.append(OuraSleepPhase(ringTimestamp: rec.ringTimestamp, index: index,
+                                              stage: stage, countInRecord: 0))
                     index += 1
                 }
             }
         }
-        return out.isEmpty ? nil : out
+        guard !out.isEmpty else { return nil }
+        // Fill the batch count now that it is known (kept out of the loop so a mid-record change in
+        // body length can never leave phases disagreeing about their own record's size).
+        let count = out.count
+        return out.map { phase in
+            OuraSleepPhase(ringTimestamp: phase.ringTimestamp, index: phase.index,
+                           stage: phase.stage, countInRecord: count)
+        }
     }
 
     // MARK: - Motion period, 2-bit MOTION_STATE codes (0x6B; s6.13)

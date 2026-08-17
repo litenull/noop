@@ -30,8 +30,23 @@ data class OuraHRV(val ringTimestamp: Long, val timeMs: Int, val b1: Int, val b2
 /** One decoded SpO2 sample. `value` is the raw SpO2 reading; `unit` documents its scale. */
 data class OuraSpO2(val ringTimestamp: Long, val value: Int, val unit: String = "raw")
 
-/** One decoded skin-temperature sample in degrees C (value already / 100). */
-data class OuraTemp(val ringTimestamp: Long, val celsius: Double)
+/**
+ * One decoded skin-temperature sample in degrees C (value already / 100). Batched temp records
+ * carry N samples sharing the record's event time; per OURA_PROTOCOL.md s6.8 the samples'
+ * timestamps walk BACKWARD from the event UTC by the record's spacing. Only a decoder with a
+ * VERIFIED spacing sets `sampleIntervalSeconds` (0x75 sleep-temp = 30 s); null means the batch's
+ * cadence is unverified (0x46), so every sample stays at the record time (honest-data invariant).
+ */
+data class OuraTemp(
+    val ringTimestamp: Long,
+    val celsius: Double,
+    /** Position within the record's sample sequence (0-based, chronological). */
+    val index: Int = 0,
+    /** Total samples in the record this sample came from. */
+    val countInRecord: Int = 1,
+    /** Verified cadence between this record's samples (seconds); null when unverified. */
+    val sampleIntervalSeconds: Int? = null,
+)
 
 /**
  * One decoded battery reading (OURA_PROTOCOL.md s6.10). `percent` is read at body[0]; `voltageMv`
@@ -58,7 +73,13 @@ enum class OuraSleepStage(val raw: Int) {
 }
 
 /** One decoded sleep-phase code in order within a 0x4B/0x4E/0x5A record (OURA_PROTOCOL.md s6.12). */
-data class OuraSleepPhase(val ringTimestamp: Long, val index: Int, val stage: OuraSleepStage)
+data class OuraSleepPhase(
+    val ringTimestamp: Long,
+    val index: Int,
+    val stage: OuraSleepStage,
+    /** Total phases in this record — anchors the backward walk (last phase = record time). */
+    val countInRecord: Int,
+)
 
 /** Motion state (OURA_PROTOCOL.md s6.13): 0 NO_MOTION, 1 RESTLESS, 2 TOSSING, 3 ACTIVE. */
 enum class OuraMotionState(val raw: Int) {

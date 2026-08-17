@@ -328,10 +328,10 @@ class OuraDriverTest {
         val rec = OuraFraming.parseRecord(bytes("4b0602000100001b"))!!
         assertEquals(
             listOf(
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP, countInRecord = 4)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT, countInRecord = 4)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM, countInRecord = 4)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE, countInRecord = 4)),
             ),
             d.ingest(rec),
         )

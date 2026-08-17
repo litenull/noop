@@ -280,10 +280,10 @@ final class OuraDriverTests: XCTestCase {
         let d = OuraDriver(ringGen: .gen3, authKey: key)
         let rec = OuraFraming.parseRecord(bytes("4b0602000100001b"))!
         XCTAssertEqual(d.ingest(record: rec), [
-            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem)),
-            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep, countInRecord: 4)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light, countInRecord: 4)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem, countInRecord: 4)),
+            .sleepPhase(OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake, countInRecord: 4)),
         ])
     }
 

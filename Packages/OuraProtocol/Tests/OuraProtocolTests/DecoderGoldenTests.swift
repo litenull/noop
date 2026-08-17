@@ -119,13 +119,15 @@ final class DecoderGoldenTests: XCTestCase {
     func testSleepPhase0x4E() {
         // header 0x00, phase byte 0x6C = bits 01 10 11 00 -> light, rem, awake, deep
         // (codes 0=deep, 1=light, 2=rem, 3=awake per the native SleepPhase_OSSAv1 enum).
+        // Every phase carries the batch count (4) so the mapping can walk epochs backward
+        // from the record time (last phase = record time).
         let rec = record("4e0602000100006c")
         let phases = OuraDecoders.decodeSleepPhase(rec)
         XCTAssertEqual(phases, [
-            OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .light),
-            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .rem),
-            OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .awake),
-            OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .deep),
+            OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .light, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .rem, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .awake, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .deep, countInRecord: 4),
         ])
     }
 
@@ -136,10 +138,25 @@ final class DecoderGoldenTests: XCTestCase {
         let rec = record("4b0602000100001b")
         let phases = OuraDecoders.decodeSleepPhase(rec)
         XCTAssertEqual(phases, [
-            OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep),
-            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light),
-            OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem),
-            OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake),
+            OuraSleepPhase(ringTimestamp: rt, index: 0, stage: .deep, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 1, stage: .light, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 2, stage: .rem, countInRecord: 4),
+            OuraSleepPhase(ringTimestamp: rt, index: 3, stage: .awake, countInRecord: 4),
+        ])
+    }
+
+    // MARK: - 0x75 sleep temp (uint16 LE / 100; batched 30 s samples walking backward)
+
+    func testSleepTemp0x75CarriesBatchPositionAndSpacing() {
+        // Two samples (36.50 C, 36.55 C): each carries its chronological index, the batch count,
+        // and the VERIFIED 30 s spacing so the mapping spreads them backward from the record time.
+        let rec = record("750802000100420e470e")
+        let temps = OuraDecoders.decodeSleepTemp(rec)
+        XCTAssertEqual(temps, [
+            OuraTemp(ringTimestamp: rt, celsius: 36.50, index: 0, countInRecord: 2,
+                     sampleIntervalSeconds: 30),
+            OuraTemp(ringTimestamp: rt, celsius: 36.55, index: 1, countInRecord: 2,
+                     sampleIntervalSeconds: 30),
         ])
     }
 

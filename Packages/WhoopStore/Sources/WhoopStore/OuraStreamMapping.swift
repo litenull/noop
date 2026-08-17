@@ -30,7 +30,8 @@ public enum OuraStreamMapping {
     public static let hrvEventKind = "OURA_HRV"
     /// WhoopEvent.kind for a decoded sleep-phase code (2-bit: deep/light/rem/awake; see OuraSleepStage).
     public static let sleepPhaseEventKind = "OURA_SLEEP_PHASE"
-    /// Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors index 0.
+    /// Oura's open sleep-phase hypnogram is a 5-minute epoch sequence. The record timestamp anchors the
+    /// record's LAST phase; earlier phases walk backward (batched-event convention, s6.12).
     public static let sleepPhaseEpochSeconds = 5 * 60
 
     /// Build a `Streams` from a batch of decoded Oura events, all stamped at the arrival wall-clock `ts`
@@ -90,10 +91,28 @@ public enum OuraStreamMapping {
                 // as a WHOOP night with no scorer change, and tag the unit so the convention is explicit
                 // and never silently assumed. PARITY: the Kotlin twin stores the SAME celsius * 100, so a
                 // given decoded celsius yields an IDENTICAL raw integer on both platforms.
-                out.skinTemp.append(SkinTempSample(ts: ts, raw: Int((v.celsius * 100).rounded()), unit: "centi_c"))
+                //
+                // BATCH PLACEMENT (s6.8): a batched record's samples share one event time; their true
+                // times walk BACKWARD from it by the record's spacing. Only the 0x75 sleep-temp decoder
+                // sets a VERIFIED spacing (30 s) — those samples spread backward. The 0x46 temp_event's
+                // batch cadence is unverified (interval nil), so its samples stay at the record time
+                // rather than being spread on a guess (honest-data invariant).
+                let sampleTs: Int
+                if let interval = v.sampleIntervalSeconds, interval > 0, v.countInRecord > 1 {
+                    sampleTs = ts - (v.countInRecord - 1 - v.index) * interval
+                } else {
+                    sampleTs = ts
+                }
+                out.skinTemp.append(SkinTempSample(ts: sampleTs, raw: Int((v.celsius * 100).rounded()), unit: "centi_c"))
 
             case .sleepPhase(let v):
-                let sampleTs = ts + v.index * sleepPhaseEpochSeconds
+                // BATCH PLACEMENT (s6.12): the record's phases share one event time; the LAST phase sits
+                // at the record time and earlier phases step BACKWARD one 5-minute epoch each — the same
+                // batched-event convention the protocol documents for IBI (s6.1), sleep-temp (s6.8) and
+                // HRV (s6.9), and the decompiled native parser applies to batched records generally. An
+                // earlier forward walk (ts + index·300) contradicted that convention and placed every
+                // record's epochs (n−1) epochs TOO LATE, mis-timing nights against the clock.
+                let sampleTs = ts - (v.countInRecord - 1 - v.index) * sleepPhaseEpochSeconds
                 out.events.append(WhoopEvent(ts: sampleTs, kind: sleepPhaseEventKind, payload: [
                     "phase": .int(v.stage.rawValue),
                     "index": .int(v.index),

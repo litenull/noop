@@ -1102,13 +1102,16 @@ public enum OuraKeyStore {
 /// on every single connect. Unlike `OuraKeyStore` this is NOT sensitive - it's an opaque ring-clock tick
 /// counter, not a credential - so plain `UserDefaults` is the right (and simplest) store.
 enum OuraHistoryCursorStore {
-    /// Mapping revision 7 corrects the sleep-stage code mapping (0=deep/1=light/2=rem/3=awake per the
-    /// native enum; the old 0=awake reading flipped deep/awake and REM/deep) and starts decoding the
-    /// 0x4B sleep_phase_information tag, so replay still-banked history once to pick up 0x4B records
-    /// that were silently dropped. Re-materialization re-interprets already-stored events (they hold
-    /// raw wire codes) and rewrites the derived coarse sleep-state rows, so past nights re-stage
-    /// correctly without another replay.
-    private static let mappingRevision = 7
+    /// Mapping revision 8 corrects the sleep-phase EPOCH PLACEMENT: a record's phases are a batch
+    /// whose event time anchors the LAST 5-minute epoch, with earlier epochs walking BACKWARD
+    /// (the batched-event convention OURA_PROTOCOL.md documents for IBI s6.1 / sleep-temp s6.8 /
+    /// HRV s6.9 and the decompiled native parser applies to batched records). The old forward walk
+    /// (`ts + index·300`) placed every record's epochs (n−1) epochs too late, mis-timing nights
+    /// against the clock. Revision 8 also spreads 0x75 sleep-temp batches backward at their verified
+    /// 30 s spacing. Re-banking the still-banked history once re-decodes every phase record under
+    /// the corrected placement; re-materialization then rewrites the affected sleep sessions. (Rev 7:
+    /// stage-code mapping + 0x4B decode. Rev 6: duration-fallback repaired nights.)
+    private static let mappingRevision = 8
     private static func key(deviceId: String) -> String { "com.noop.oura.historyCursor.\(deviceId)" }
     private static func revisionKey(deviceId: String) -> String { "com.noop.oura.historyCursor.mappingRevision.\(deviceId)" }
 

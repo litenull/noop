@@ -54,11 +54,25 @@ public struct OuraSpO2: Equatable, Sendable, Codable {
 }
 
 /// One decoded skin-temperature sample in hundredths of a degree C scaled to C (value already / 100).
+/// Batched temp records carry N samples sharing the record's event time; per OURA_PROTOCOL.md s6.8
+/// the samples' timestamps walk BACKWARD from the event UTC by the record's spacing. Only a decoder
+/// with a VERIFIED spacing sets `sampleIntervalSeconds` (0x75 sleep-temp = 30 s); nil means the
+/// batch's internal cadence is unverified (0x46), so every sample stays at the record time — no
+/// guessed placement (honest-data invariant).
 public struct OuraTemp: Equatable, Sendable, Codable {
     public let ringTimestamp: UInt32
     public let celsius: Double
-    public init(ringTimestamp: UInt32, celsius: Double) {
+    /// Position within the record's sample sequence (0-based, chronological).
+    public let index: Int
+    /// Total samples in the record this sample came from.
+    public let countInRecord: Int
+    /// Verified cadence between this record's samples (seconds); nil when unverified.
+    public let sampleIntervalSeconds: Int?
+    public init(ringTimestamp: UInt32, celsius: Double, index: Int = 0,
+                countInRecord: Int = 1, sampleIntervalSeconds: Int? = nil) {
         self.ringTimestamp = ringTimestamp; self.celsius = celsius
+        self.index = index; self.countInRecord = countInRecord
+        self.sampleIntervalSeconds = sampleIntervalSeconds
     }
 }
 
@@ -85,12 +99,19 @@ public enum OuraSleepStage: Int, Sendable, Equatable, Codable {
 }
 
 /// One decoded sleep-phase code in order within a 0x4B/0x4E/0x5A record (OURA_PROTOCOL.md s6.12).
+/// A record's phases are a BATCH sharing the record's event time: the LAST phase sits at the record
+/// time and earlier phases step backward one 5-minute epoch each (the batched-event convention the
+/// protocol documents for the other batched families — IBI s6.1, sleep-temp s6.8, HRV s6.9 — and the
+/// decompiled native parser applies to all batched records). The mapping layer places epoch `i` at
+/// `ts − (countInRecord − 1 − i) × 300 s`.
 public struct OuraSleepPhase: Equatable, Sendable, Codable {
     public let ringTimestamp: UInt32
     public let index: Int          // position within the record's phase sequence
     public let stage: OuraSleepStage
-    public init(ringTimestamp: UInt32, index: Int, stage: OuraSleepStage) {
-        self.ringTimestamp = ringTimestamp; self.index = index; self.stage = stage
+    public let countInRecord: Int  // total phases in this record (anchors the backward walk)
+    public init(ringTimestamp: UInt32, index: Int, stage: OuraSleepStage, countInRecord: Int) {
+        self.ringTimestamp = ringTimestamp; self.index = index
+        self.stage = stage; self.countInRecord = countInRecord
     }
 }
 

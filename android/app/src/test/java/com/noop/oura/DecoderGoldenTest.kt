@@ -138,10 +138,10 @@ class DecoderGoldenTest {
         val phases = OuraDecoders.decodeSleepPhase(rec)
         assertEquals(
             listOf(
-                OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.LIGHT),
-                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.REM),
-                OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.AWAKE),
-                OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.DEEP),
+                OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.LIGHT, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.REM, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.AWAKE, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.DEEP, countInRecord = 4),
             ),
             phases,
         )
@@ -156,12 +156,31 @@ class DecoderGoldenTest {
         val phases = OuraDecoders.decodeSleepPhase(rec)
         assertEquals(
             listOf(
-                OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP),
-                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT),
-                OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM),
-                OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE),
+                OuraSleepPhase(ringTimestamp = rt, index = 0, stage = OuraSleepStage.DEEP, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 1, stage = OuraSleepStage.LIGHT, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 2, stage = OuraSleepStage.REM, countInRecord = 4),
+                OuraSleepPhase(ringTimestamp = rt, index = 3, stage = OuraSleepStage.AWAKE, countInRecord = 4),
             ),
             phases,
+        )
+    }
+
+    // MARK: - 0x75 sleep temp (uint16 LE / 100; batched 30 s samples walking backward)
+
+    @Test
+    fun testSleepTemp0x75CarriesBatchPositionAndSpacing() {
+        // Two samples (36.50 C, 36.55 C): each carries its chronological index, the batch count,
+        // and the VERIFIED 30 s spacing so the mapping spreads them backward from the record time.
+        val rec = record("750802000100420e470e")
+        val temps = OuraDecoders.decodeSleepTemp(rec)
+        assertEquals(
+            listOf(
+                OuraTemp(ringTimestamp = rt, celsius = 36.50, index = 0, countInRecord = 2,
+                         sampleIntervalSeconds = 30),
+                OuraTemp(ringTimestamp = rt, celsius = 36.55, index = 1, countInRecord = 2,
+                         sampleIntervalSeconds = 30),
+            ),
+            temps,
         )
     }
 

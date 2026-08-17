@@ -279,10 +279,15 @@ object OuraDecoders {
         var i = 0
         while (i + 1 < b.size) {
             val c = u16le(b, i).toDouble() / 100.0        // unsigned for sleep temp
-            out.add(OuraTemp(ringTimestamp = rec.ringTimestamp, celsius = c))
+            out.add(OuraTemp(ringTimestamp = rec.ringTimestamp, celsius = c,
+                             index = out.size, countInRecord = 0, sampleIntervalSeconds = 30))
             i += 2
         }
-        return if (out.isEmpty()) null else out
+        if (out.isEmpty()) return null
+        val count = out.size
+        return out.map { t ->
+            t.copy(countInRecord = count)
+        }
     }
 
     // MARK: - Battery (0x0D outer response; s6.10)
@@ -372,6 +377,14 @@ object OuraDecoders {
      * / cloud-API hypnogram order; an earlier 0=awake reading was wrong). Per OURA_PROTOCOL.md s6.12.
      * Returns null on a short body. The header byte is skipped; phase bytes follow.
      */
+    /**
+     * Decode the 0x4B/0x4E/0x5A sleep_phase records: byte6 = header; phase codes are 2-bit, 4 per byte
+     * (bits [7:6][5:4][3:2][1:0]); codes 0=deep,1=light,2=REM,3=awake (native `SleepPhase_OSSAv1` enum
+     * / cloud-API hypnogram order; an earlier 0=awake reading was wrong). Per OURA_PROTOCOL.md s6.12.
+     * Returns null on a short body. The header byte is skipped; phase bytes follow. The record is a
+     * BATCH: every phase carries `countInRecord` so the mapping can walk epochs BACKWARD from the
+     * record time (last phase = record time), mirroring the Swift twin exactly.
+     */
     fun decodeSleepPhase(rec: OuraRecord): List<OuraSleepPhase>? {
         val b = rec.payload
         // body[0] is the header (spec offset 6); phase codes begin at body[1].
@@ -386,13 +399,18 @@ object OuraDecoders {
                 val code = (byte shr shift) and 0x03
                 val stage = OuraSleepStage.fromRaw(code)
                 if (stage != null) {
-                    out.add(OuraSleepPhase(ringTimestamp = rec.ringTimestamp, index = index, stage = stage))
+                    out.add(OuraSleepPhase(ringTimestamp = rec.ringTimestamp, index = index,
+                                           stage = stage, countInRecord = 0))
                     index += 1
                 }
                 shift -= 2
             }
         }
-        return if (out.isEmpty()) null else out
+        if (out.isEmpty()) return null
+        // Fill the batch count now that it is known, so phases can never disagree about their own
+        // record's size (same rule as the Swift twin).
+        val count = out.size
+        return out.map { p -> p.copy(countInRecord = count) }
     }
 
     // MARK: - Motion period, 2-bit MOTION_STATE codes (0x6B; s6.13)

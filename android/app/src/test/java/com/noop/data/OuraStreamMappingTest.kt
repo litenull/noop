@@ -64,11 +64,13 @@ class OuraStreamMappingTest {
 
     @Test
     fun sleepPhaseBecomesOuraSleepPhaseEventAndSleepState() {
+        // BATCH PLACEMENT: the record time anchors the LAST phase; earlier phases walk BACKWARD one
+        // 5-minute epoch each (s6.12) - 3 phases land at base+2-600, base+2-300, base+2.
         val s = OuraStreamMapping.streams(
             listOf(
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 0, stage = OuraSleepStage.DEEP)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 1, stage = OuraSleepStage.REM)),
-                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 2, stage = OuraSleepStage.AWAKE)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 0, stage = OuraSleepStage.DEEP, countInRecord = 3)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 1, stage = OuraSleepStage.REM, countInRecord = 3)),
+                OuraEvent.SleepPhaseEvent(OuraSleepPhase(ringTimestamp = 2, index = 2, stage = OuraSleepStage.AWAKE, countInRecord = 3)),
             ),
             anchor,
         )
@@ -76,17 +78,47 @@ class OuraStreamMappingTest {
         val deep = s.events[0]
         assertEquals(OuraStreamMapping.EVENT_SLEEP_PHASE, deep.kind)
         assertEquals("OURA_SLEEP_PHASE", deep.kind)
-        assertEquals(base + 2, deep.ts)
+        assertEquals(base + 2 - 600, deep.ts)
         assertEquals(0, deep.payload["phase"])           // OuraSleepStage.DEEP.raw == 0
         assertEquals(0, deep.payload["index"])
-        assertEquals(base + 2 + 300, s.events[1].ts)
+        assertEquals(base + 2 - 300, s.events[1].ts)
         assertEquals(2, s.events[1].payload["phase"])     // REM.raw == 2
-        assertEquals(base + 2 + 600, s.events[2].ts)
+        assertEquals(base + 2, s.events[2].ts)
         assertEquals(listOf(2, 2, 0), s.sleepState.map { it.state })
-        assertEquals(listOf(base + 2, base + 2 + 300, base + 2 + 600), s.sleepState.map { it.ts })
+        assertEquals(listOf(base + 2 - 600, base + 2 - 300, base + 2), s.sleepState.map { it.ts })
         // PARITY: the payload is exactly { phase, index } - the Swift twin emits no phase_name, so neither
         // does Kotlin. Pin it so a re-added phase_name key breaks this test.
         assertNull(deep.payload["phase_name"])
+    }
+
+    @Test
+    fun sleepTempBatchSpreadsBackwardFromRecordTs() {
+        // 0x75 sleep-temp: 3 samples at the VERIFIED 30 s spacing - the last sits at the record
+        // time, earlier samples walk backward (s6.8). Mirrors the Swift twin exactly.
+        val s = OuraStreamMapping.streams(
+            listOf(
+                OuraEvent.Temp(OuraTemp(ringTimestamp = 4, celsius = 34.10, index = 0, countInRecord = 3, sampleIntervalSeconds = 30)),
+                OuraEvent.Temp(OuraTemp(ringTimestamp = 4, celsius = 34.20, index = 1, countInRecord = 3, sampleIntervalSeconds = 30)),
+                OuraEvent.Temp(OuraTemp(ringTimestamp = 4, celsius = 34.30, index = 2, countInRecord = 3, sampleIntervalSeconds = 30)),
+            ),
+            anchor,
+        )
+        assertEquals(listOf(base + 4 - 60, base + 4 - 30, base + 4), s.skinTemp.map { it.ts })
+        assertEquals(listOf(3410, 3420, 3430), s.skinTemp.map { it.raw })
+    }
+
+    @Test
+    fun unspacedTempBatchStaysAtRecordTs() {
+        // A batched temp record whose spacing is UNVERIFIED (0x46: interval null) must NOT be
+        // spread on a guess - every sample stays at the record time (honest-data invariant).
+        val s = OuraStreamMapping.streams(
+            listOf(
+                OuraEvent.Temp(OuraTemp(ringTimestamp = 4, celsius = 34.10, index = 0, countInRecord = 2, sampleIntervalSeconds = null)),
+                OuraEvent.Temp(OuraTemp(ringTimestamp = 4, celsius = 34.20, index = 1, countInRecord = 2, sampleIntervalSeconds = null)),
+            ),
+            anchor,
+        )
+        assertEquals(listOf(base + 4, base + 4), s.skinTemp.map { it.ts })
     }
 
     @Test
